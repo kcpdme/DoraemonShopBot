@@ -46,3 +46,10 @@ func TestExactUSDTAmount(t *testing.T) {
 		t.Fatal("wrong amount must not match")
 	}
 }
+
+func TestNormalizeHash(t *testing.T) {
+	hash := "0x1111111111111111111111111111111111111111111111111111111111111111"
+	if got := normalizeHash("https://bscscan.com/tx/" + hash + "?foo=bar"); got != hash {
+		t.Fatalf("got %q", got)
+	}
+}

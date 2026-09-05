@@ -4,12 +4,14 @@ A Telegram-only digital-goods store with no frontend. It keeps a per-product del
 
 ## What it does
 
-- Customer catalog, product details, stock visibility, and BEP-20/Polygon checkout.
-- Reserves a unique stock unit as soon as an order starts; it is released if the owner rejects the payment proof.
+- Customer catalog, product details, stock visibility, quantity presets/custom quantities, and a three-step BEP-20/Polygon checkout with editable payment cards.
+- Reserves FIFO stock for 30 minutes. Repeated checkout taps resume the same order. Unpaid cancellation/expiry releases stock; submitted payments keep their reservation while being checked.
 - Customer submits a transaction hash. The bot verifies the exact USDT contract, receiving wallet, amount, successful receipt, and three block confirmations before delivering the reserved stock automatically. The owner retains `/confirm ORDER_ID` as an emergency fallback.
 - On confirmation the buyer receives the purchased item list, delivery instruction, and their private stock payload. The public channel sees only the product purchase, never credentials or buyer identity.
 - Every `/stock` addition sends a restock announcement to every user who started the bot and to the configured channel.
-- The owner can create products, add stock, confirm/reject payments, and broadcast custom messages to started users and the channel.
+- The owner-only in-chat panel creates products through a guided wizard, accepts single or bulk stock (one private payload per line), shows products/orders/dashboard, hides products, broadcasts announcements, and keeps emergency delivery controls.
+- Customers have paginated order history, payment recovery controls, and support messaging. The owner can use Telegram's native Reply action on a support request; `/reply CUSTOMER_CHAT_ID message` remains an optional fallback.
+- Channel membership is required for shopping. Support and existing-order payment recovery remain accessible even if a customer leaves the channel.
 
 ## Setup
 
@@ -19,24 +21,30 @@ A Telegram-only digital-goods store with no frontend. It keeps a per-product del
 
 The bot uses long polling, so no domain, webhook, or frontend is required. Its local data file contains delivery payloads; protect the host volume and back it up. For multi-instance production deployment, replace the JSON store with Postgres (the current file store is intentionally single-process).
 
-## Owner commands
+## Owner panel
 
 ```
-/admin
-/addproduct SKU | Name | price_usdt | description | delivery instruction
-/stock SKU | one private delivery payload
+/start → Owner panel
 /confirm ORDER_ID
 /reject ORDER_ID reason
-/announce your message
+/reply CUSTOMER_CHAT_ID your message
 ```
 
-Each `/stock` entry is one sellable unit. For example, a licence key, login bundle, or download link can be the entire private payload. Product delivery instructions are sent on every confirmed delivery along with the purchased item list.
+Each stock line is one sellable unit. For example, a licence key, login bundle, or download link can be the entire private payload. Product delivery instructions are sent on every confirmed delivery along with the purchased item list.
 
 ## Automatic payment operation
 
-Create one Etherscan API V2 key and configure the exact official USDT contract address for each accepted network. After `/paid ORDER_ID TX_HASH`, the bot checks the selected chain every 30 seconds. It only auto-delivers when the hash has an exact USDT transfer to the configured wallet, for the exact order amount, from the configured token contract, with a successful receipt and at least three confirmations. A submitted hash can only be used once.
+No Etherscan account or API key is required. Customers tap **I've paid · Submit TxID** and paste a hash or explorer link; `/paid ORDER_ID TX_HASH` also works. The bot checks the selected chain through public JSON-RPC providers. It only auto-delivers after checking the chain ID, transaction age, exact USDT contract, receiving wallet, exact amount, successful receipt and three confirmations. A transaction cannot fulfill multiple orders on the same chain.
 
-If Etherscan is unavailable or a transaction is ambiguous, the order stays pending; it is never auto-rejected. The owner can inspect it and use `/confirm ORDER_ID` or `/reject ORDER_ID reason`.
+Only potentially recoverable states (a transaction not yet visible, insufficient confirmations, or provider outages) retry every 30 seconds. A permanently invalid proof—old transaction, failed receipt, wrong token/wallet or amount—stops automatic verification and offers a replacement TxID or support. Rejected proof is distinct from a rejected order.
+
+Confirmed payments enter a durable delivery queue. Telegram failures retry delivery without rechecking payment; the purchased list, instructions and private stock are delivered in saved parts. A crash after Telegram accepts a message but before its cursor is saved may repeat that part (at-least-once delivery). Public sales posts never contain credentials or customer identities. Channel notification failures currently require owner follow-up.
+
+The owner can inspect pending payments and use `/confirm ORDER_ID` or `/reject ORDER_ID reason`. Manual confirmation deliberately bypasses blockchain checks and must only be used after independently checking payment. Public TxIDs do not prove payer identity: this shared-wallet design cannot prevent someone claiming another person's still-unclaimed matching transfer. Per-order deposit addresses or wallet-ownership verification would be needed to remove that limitation.
+
+## Deploy an update to the deployment server
+
+Run `GOTOOLCHAIN=local go test -race ./...` and `GOTOOLCHAIN=local go vet ./...`, then build with `CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /tmp/doraemon-bot-release ./cmd/bot`. Copy the binary and `deploy/release.py` into a fresh temporary directory on the server. Run the script there with sudo, passing the staged binary path. It checks Telegram/channel access and both chain/token configurations, stops the service, backs up the binary/config/data under `/var/backups/doraemon-shop`, atomically replaces the binary, and restarts `doraemon-shop`. It never overwrites live inventory with local test data. On startup failure it restores the previous binary and configuration, retaining current live data.
 
 ## Platform compliance
 

@@ -1,0 +1,21 @@
+[Unit]
+Description=Doraemon Telegram Shop Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=admin
+Group=admin
+WorkingDirectory=/opt/doraemon-shop-bot
+EnvironmentFile=/etc/doraemon-shop.env
+ExecStart=/opt/doraemon-shop-bot/doraemon-bot
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/doraemon-shop
+
+[Install]
+WantedBy=multi-user.target
