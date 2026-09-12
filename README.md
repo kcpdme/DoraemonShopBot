@@ -1,51 +1,184 @@
 # Doraemon Shop Bot
 
-A Telegram-only digital-goods store with no frontend. It keeps a per-product delivery instruction, FIFO stock units, two USDT payment rails, owner-only administration, buyer delivery, and public channel activity messages.
+An open-source Telegram storefront for digital goods, written in Go. Buyers can shop through chat or an optional Telegram Mini App, pay with USDT on BNB Smart Chain or Polygon, and receive inventory privately after on-chain confirmation.
 
-## What it does
+The project has no database or framework dependency. A single process runs the Telegram bot, Mini App API, static web assets, blockchain verification, and a local JSON store.
 
-- Customer catalog, product details, stock visibility, quantity presets/custom quantities, and a three-step BEP-20/Polygon checkout with editable payment cards.
-- Reserves FIFO stock for 30 minutes. Repeated checkout taps resume the same order. Unpaid cancellation/expiry releases stock; submitted payments keep their reservation while being checked.
-- Customer submits a transaction hash. The bot verifies the exact USDT contract, receiving wallet, amount, successful receipt, and three block confirmations before delivering the reserved stock automatically. The owner retains `/confirm ORDER_ID` as an emergency fallback.
-- On confirmation the buyer receives the purchased item list, delivery instruction, and their private stock payload. The public channel sees only the product purchase, never credentials or buyer identity.
-- Every `/stock` addition sends a restock announcement to every user who started the bot and to the configured channel.
-- The owner-only in-chat panel creates products through a guided wizard, accepts single or bulk stock (one private payload per line), shows products/orders/dashboard, hides products, broadcasts announcements, and keeps emergency delivery controls.
-- Customers have paginated order history, payment recovery controls, and support messaging. The owner can use Telegram's native Reply action on a support request; `/reply CUSTOMER_CHAT_ID message` remains an optional fallback.
-- Channel membership is required for shopping. Support and existing-order payment recovery remain accessible even if a customer leaves the channel.
+> [!IMPORTANT]
+> Telegram requires Telegram Stars for many digital-goods transactions inside Telegram. This project implements an external USDT flow, but operators are responsible for Telegram policy, consumer-protection, tax, sanctions, and local-law compliance.
 
-## Setup
+## Features
 
-1. Create a bot with [@BotFather](https://t.me/BotFather). Create a public channel, add the bot as an administrator, and set its `@channel` handle in `SALES_CHANNEL`.
-2. Copy `.env.example` into your deployment environment and populate every required value. `OWNER_TELEGRAM_ID` is numeric, not an `@username`.
-3. Run it with Go 1.22+: `go run ./cmd/bot`.
+- Responsive Telegram Mini App with live catalog, quantity and network selection, stock reservation, payment details, and order history.
+- Full chat-based catalog and three-step checkout for users who prefer bot buttons.
+- FIFO inventory with one private delivery payload per stock unit.
+- Thirty-minute reservations, duplicate-checkout protection, automatic expiry, and stock release.
+- Exact USDT verification: chain ID, token contract, destination, amount, receipt success, transaction age, and three confirmations.
+- Durable delivery queue with retry behavior and owner emergency controls.
+- Owner-only product wizard, stock management, order review, broadcasts, dashboard, and support replies.
+- Optional channel-membership gate and public restock/sale announcements.
+- No third-party Go modules, explorer API key, frontend build step, or external database.
 
-The bot uses long polling, so no domain, webhook, or frontend is required. Its local data file contains delivery payloads; protect the host volume and back it up. For multi-instance production deployment, replace the JSON store with Postgres (the current file store is intentionally single-process).
+## Requirements
 
-## Owner panel
+- Go 1.22 or newer
+- A Telegram bot created with [@BotFather](https://t.me/BotFather)
+- An optional public Telegram channel where the bot is an administrator
+- BNB Smart Chain and Polygon addresses that can receive USDT
+- For the Mini App: a public HTTPS origin reverse-proxied to the bot's local HTTP listener
 
+## Quick start
+
+1. Clone the repository and enter it.
+
+   ```bash
+   git clone https://github.com/your-account/doraemon-shop-bot.git
+   cd doraemon-shop-bot
+   ```
+
+2. Create a local environment file. It is ignored by Git.
+
+   ```bash
+   cp .env.example .env
+   ```
+
+3. Fill in `.env` with your own bot token, numeric Telegram owner ID, receiving wallets, and official token contracts. Never commit this file.
+
+4. Export the values and start the bot.
+
+   ```bash
+   set -a
+   source .env
+   set +a
+   go run ./cmd/bot
+   ```
+
+5. Send `/start` to the bot. The configured owner sees the owner panel and can create a product, then add stock.
+
+Each stock line is one deliverable unit—for example, one license key, account bundle, or private download link.
+
+## Configuration
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `BOT_TOKEN` | Yes | Secret token issued by BotFather. |
+| `OWNER_TELEGRAM_ID` | Yes | Numeric Telegram user ID allowed to administer the store. |
+| `SALES_CHANNEL` | No | Public `@channel` handle or numeric channel ID. Enables membership gating and announcements. |
+| `BEP20_USDT_ADDRESS` | Yes | Receiving wallet for BNB Smart Chain payments. |
+| `POLYGON_USDT_ADDRESS` | Yes | Receiving wallet for Polygon payments. |
+| `BEP20_USDT_CONTRACT` | Yes | Exact official USDT contract on BNB Smart Chain. |
+| `POLYGON_USDT_CONTRACT` | Yes | Exact official USDT contract on Polygon PoS. |
+| `BSC_RPC_URL` | No | Custom BSC JSON-RPC URL; public fallbacks are built in. |
+| `POLYGON_RPC_URL` | No | Custom Polygon JSON-RPC URL; public fallbacks are built in. |
+| `DATA_FILE` | No | JSON store location; defaults to `data/store.json`. |
+| `MINI_APP_PUBLIC_URL` | No | Public HTTPS URL for the Mini App. Empty keeps bot-only mode. |
+| `MINI_APP_LISTEN_ADDR` | No | Local web listener; defaults to `:8080`. Prefer `127.0.0.1:8080` behind a proxy. |
+
+The application intentionally does not load `.env` itself. Use your shell, container runtime, systemd `EnvironmentFile`, or secret manager to inject configuration.
+
+## Enable the Telegram Mini App
+
+The Mini App is embedded in the Go binary, so it requires no Node.js installation or separate frontend build.
+
+1. Set a local-only listener and your public HTTPS URL:
+
+   ```dotenv
+   MINI_APP_LISTEN_ADDR=127.0.0.1:8080
+   MINI_APP_PUBLIC_URL=https://shop.example.com
+   ```
+
+2. Reverse-proxy `https://shop.example.com` to `http://127.0.0.1:8080`. Your proxy should manage TLS and forward normal HTTP headers. Do not cache `/api/mini-app/*` responses.
+
+3. Restart the bot. On startup it registers **Open shop** as Telegram's menu button, and `/start` includes an **Open Mini App** button.
+
+4. Open the app from Telegram. Opening the public URL in an ordinary browser shows an authentication error by design because it has no signed Telegram launch data.
+
+Mini App requests are authenticated server-side with Telegram's HMAC signature. Signatures older than one hour are rejected. The API accepts the Telegram identity from signed launch data only; a browser-provided user ID is never trusted. Product delivery payloads are never returned by the Mini App API.
+
+## Buyer flow
+
+1. Browse a product in the Mini App or bot chat.
+2. Choose a quantity and either BEP-20 or Polygon.
+3. The bot atomically reserves FIFO stock for 30 minutes.
+4. Send the exact USDT amount to the shown wallet on the selected network.
+5. In the bot chat, tap **I've paid · Submit TxID** and paste the transaction hash or explorer URL.
+6. After three confirmations, the bot sends delivery instructions and each private stock payload to that buyer.
+
+Public announcements contain neither buyer identity nor private inventory. A transaction hash cannot fulfill two orders on the same network.
+
+## Owner commands
+
+Most administration is available from `/start` → **Owner panel**.
+
+```text
+/admin                         Open the owner panel
+/confirm ORDER_ID              Deliver after a manual payment check
+/reject ORDER_ID reason        Reject submitted payment and release stock
+/reply CHAT_ID message         Reply to a support request
+/announce message              Broadcast to users and the sales channel
 ```
-/start → Owner panel
-/confirm ORDER_ID
-/reject ORDER_ID reason
-/reply CUSTOMER_CHAT_ID your message
+
+Manual confirmation bypasses blockchain validation. Use it only after independently confirming payment.
+
+## Data and secret safety
+
+- `.env`, private key formats, runtime data, databases, logs, and local binaries are excluded in `.gitignore`.
+- `.env.example` contains names and placeholders only. Keep it safe to publish.
+- `data/store.json` contains inventory payloads, buyer IDs, orders, and delivery state. Store it on an encrypted/protected volume, mode `0600`, and back it up securely.
+- Never place seed phrases, wallet private keys, RPC credentials, or real stock in source files. This bot needs receiving addresses only; it never needs wallet signing keys.
+- The file store is single-process. Do not run multiple replicas against the same JSON file. Move persistence and reservation locking to a transactional database before scaling horizontally.
+- If a secret has ever been committed, adding it to `.gitignore` is insufficient. Revoke/rotate it and remove it from Git history before publishing.
+
+Before making a fork public, run a secret scanner against the full Git history and inspect `git ls-files` yourself.
+
+## Development
+
+Run the test suite and static analysis:
+
+```bash
+GOTOOLCHAIN=local go test -race ./...
+GOTOOLCHAIN=local go vet ./...
 ```
 
-Each stock line is one sellable unit. For example, a licence key, login bundle, or download link can be the entire private payload. Product delivery instructions are sent on every confirmed delivery along with the purchased item list.
+Build a production Linux binary:
 
-## Automatic payment operation
+```bash
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+  go build -trimpath -ldflags='-s -w' -o doraemon-bot ./cmd/bot
+```
 
-No Etherscan account or API key is required. Customers tap **I've paid · Submit TxID** and paste a hash or explorer link; `/paid ORDER_ID TX_HASH` also works. The bot checks the selected chain through public JSON-RPC providers. It only auto-delivers after checking the chain ID, transaction age, exact USDT contract, receiving wallet, exact amount, successful receipt and three confirmations. A transaction cannot fulfill multiple orders on the same chain.
+The Mini App frontend lives in `cmd/bot/miniapp/` and is embedded by `cmd/bot/miniapp.go`. API routes are:
 
-Only potentially recoverable states (a transaction not yet visible, insufficient confirmations, or provider outages) retry every 30 seconds. A permanently invalid proof—old transaction, failed receipt, wrong token/wallet or amount—stops automatic verification and offers a replacement TxID or support. Rejected proof is distinct from a rejected order.
+- `GET /api/mini-app/catalog`
+- `GET /api/mini-app/orders`
+- `POST /api/mini-app/orders`
+- `GET /healthz` (unauthenticated service health check)
 
-Confirmed payments enter a durable delivery queue. Telegram failures retry delivery without rechecking payment; the purchased list, instructions and private stock are delivered in saved parts. A crash after Telegram accepts a message but before its cursor is saved may repeat that part (at-least-once delivery). Public sales posts never contain credentials or customer identities. Channel notification failures currently require owner follow-up.
+All API routes require a fresh `Authorization: tma <Telegram initData>` header.
 
-The owner can inspect pending payments and use `/confirm ORDER_ID` or `/reject ORDER_ID reason`. Manual confirmation deliberately bypasses blockchain checks and must only be used after independently checking payment. Public TxIDs do not prove payer identity: this shared-wallet design cannot prevent someone claiming another person's still-unclaimed matching transfer. Per-order deposit addresses or wallet-ownership verification would be needed to remove that limitation.
+## Production deployment
 
-## Deploy an update to the deployment server
+An example hardened systemd unit is included at `deploy/doraemon-shop.service`. It expects:
 
-Run `GOTOOLCHAIN=local go test -race ./...` and `GOTOOLCHAIN=local go vet ./...`, then build with `CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /tmp/doraemon-bot-release ./cmd/bot`. Copy the binary and `deploy/release.py` into a fresh temporary directory on the server. Run the script there with sudo, passing the staged binary path. It checks Telegram/channel access and both chain/token configurations, stops the service, backs up the binary/config/data under `/var/backups/doraemon-shop`, atomically replaces the binary, and restarts `doraemon-shop`. It never overwrites live inventory with local test data. On startup failure it restores the previous binary and configuration, retaining current live data.
+- binary: `/opt/doraemon-shop-bot/doraemon-bot`
+- environment: `/etc/doraemon-shop.env`
+- writable data: `/var/lib/doraemon-shop/store.json`
 
-## Platform compliance
+`deploy/release.py` performs preflight checks, backs up the binary/config/data, atomically replaces the binary, restarts the service, and restores the prior release if startup fails. Review and adapt both deployment files for your own Linux account, paths, TLS proxy, and backup policy before use.
 
-Telegram currently says that digital goods sold inside Telegram apps must use Telegram Stars; it warns that third-party payment providers for in-app digital goods can lead to enforcement. This project implements the requested external BEP-20/Polygon flow, but you should obtain legal/platform guidance before operating it in Telegram mobile clients. See Telegram's [digital-goods payment policy](https://core.telegram.org/bots/payments-stars) and [developer terms](https://telegram.org/tos/bot-developers).
+## Payment limitations
+
+- Public RPC endpoints can be rate-limited or unavailable. Configure trusted providers for production.
+- A shared receiving wallet cannot prove which Telegram user initiated a public transfer. Someone who learns an unclaimed matching TxID could submit it first. Per-order deposit addresses or wallet-ownership proofs are needed to eliminate this limitation.
+- Telegram delivery is at-least-once. A crash after Telegram accepts a message but before the delivery cursor is saved can repeat that message.
+- Crypto payments can be irreversible. Provide clear support and refund policies.
+
+## Contributing
+
+Issues and pull requests are welcome. Please keep changes focused, add tests for behavior changes, run `go test -race ./...` and `go vet ./...`, and never include real credentials or inventory in fixtures.
+
+## License
+
+Released under the [MIT License](LICENSE).
+
+This community project is not affiliated with Telegram, Tether, BNB Chain, Polygon, or the owners of the Doraemon trademark.

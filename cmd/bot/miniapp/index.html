@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <title>Doraemon Shop</title>
+  <link rel="stylesheet" href="styles.css?v=20260912">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="app.js?v=20260912" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">Doraemon Shop</p>
+      <h1 id="title">Digital goods</h1>
+    </div>
+    <span class="secure">Secure checkout</span>
+  </header>
+
+  <main>
+    <section id="notice" class="notice hidden" role="status"></section>
+    <section id="shop-view">
+      <div class="intro">
+        <p>Instant delivery after your USDT payment is confirmed.</p>
+        <button id="refresh" class="text-button" type="button">Refresh stock</button>
+      </div>
+      <div id="catalog" class="catalog" aria-live="polite"></div>
+    </section>
+
+    <section id="orders-view" class="hidden">
+      <div id="orders" class="orders" aria-live="polite"></div>
+    </section>
+
+    <section id="checkout-view" class="hidden">
+      <button id="checkout-back" class="back" type="button">Back to products</button>
+      <div class="checkout-panel">
+        <p class="eyebrow">Checkout</p>
+        <h2 id="checkout-name"></h2>
+        <p id="checkout-description" class="muted"></p>
+
+        <label for="quantity">Quantity</label>
+        <div class="stepper">
+          <button id="minus" type="button" aria-label="Decrease quantity">−</button>
+          <input id="quantity" type="number" inputmode="numeric" min="1" max="50" value="1">
+          <button id="plus" type="button" aria-label="Increase quantity">+</button>
+        </div>
+
+        <fieldset>
+          <legend>Payment network</legend>
+          <label class="network"><input type="radio" name="network" value="bep20" checked><span><b>BNB Smart Chain</b><small>USDT · BEP-20</small></span></label>
+          <label class="network"><input type="radio" name="network" value="polygon"><span><b>Polygon</b><small>USDT · Polygon PoS</small></span></label>
+        </fieldset>
+
+        <div class="total"><span>Total</span><strong id="checkout-total">0.00 USDT</strong></div>
+        <button id="place-order" class="primary" type="button">Reserve stock</button>
+        <p class="fine-print">Stock is reserved for 30 minutes. Payment details are also sent to your bot chat.</p>
+      </div>
+    </section>
+
+    <section id="success-view" class="hidden">
+      <div class="success-panel">
+        <div class="success-mark">✓</div>
+        <p class="eyebrow">Stock reserved</p>
+        <h2>Complete your payment</h2>
+        <div id="order-summary" class="receipt"></div>
+        <p class="muted">Send the exact amount on the selected network. Then close this app and submit your TxID in the bot chat.</p>
+        <button id="copy-wallet" class="secondary" type="button">Copy wallet address</button>
+        <button id="close-app" class="primary" type="button">Continue in bot chat</button>
+      </div>
+    </section>
+  </main>
+
+  <nav id="tabs" class="tabs" aria-label="Main navigation">
+    <button data-view="shop" class="active" type="button"><span>Shop</span></button>
+    <button data-view="orders" type="button"><span>My orders</span></button>
+  </nav>
+</body>
+</html>

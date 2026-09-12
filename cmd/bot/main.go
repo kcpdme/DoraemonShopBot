@@ -13,6 +13,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -26,6 +27,8 @@ type Config struct {
 	Token          string
 	OwnerID        int64
 	Channel        string // @channel or numeric channel id; bot must be an administrator.
+	MiniAppURL     string // Public HTTPS URL Telegram opens for the optional Mini App.
+	HTTPAddr       string // Local address serving the Mini App and its API.
 	BEP20Address   string
 	PolygonAddress string
 	BEP20USDT      string
@@ -40,7 +43,7 @@ func config() (Config, error) {
 	if err != nil || owner == 0 {
 		return Config{}, errors.New("OWNER_TELEGRAM_ID must be a numeric Telegram user ID")
 	}
-	c := Config{Token: os.Getenv("BOT_TOKEN"), OwnerID: owner, Channel: os.Getenv("SALES_CHANNEL"), BEP20Address: os.Getenv("BEP20_USDT_ADDRESS"), PolygonAddress: os.Getenv("POLYGON_USDT_ADDRESS"), BEP20USDT: os.Getenv("BEP20_USDT_CONTRACT"), PolygonUSDT: os.Getenv("POLYGON_USDT_CONTRACT"), BSCRPCURL: os.Getenv("BSC_RPC_URL"), PolygonRPCURL: os.Getenv("POLYGON_RPC_URL"), DataFile: os.Getenv("DATA_FILE")}
+	c := Config{Token: os.Getenv("BOT_TOKEN"), OwnerID: owner, Channel: os.Getenv("SALES_CHANNEL"), MiniAppURL: strings.TrimSpace(os.Getenv("MINI_APP_PUBLIC_URL")), HTTPAddr: strings.TrimSpace(os.Getenv("MINI_APP_LISTEN_ADDR")), BEP20Address: os.Getenv("BEP20_USDT_ADDRESS"), PolygonAddress: os.Getenv("POLYGON_USDT_ADDRESS"), BEP20USDT: os.Getenv("BEP20_USDT_CONTRACT"), PolygonUSDT: os.Getenv("POLYGON_USDT_CONTRACT"), BSCRPCURL: os.Getenv("BSC_RPC_URL"), PolygonRPCURL: os.Getenv("POLYGON_RPC_URL"), DataFile: os.Getenv("DATA_FILE")}
 	if c.Token == "" || c.BEP20Address == "" || c.PolygonAddress == "" {
 		return Config{}, errors.New("BOT_TOKEN, BEP20_USDT_ADDRESS and POLYGON_USDT_ADDRESS are required")
 	}
@@ -54,6 +57,18 @@ func config() (Config, error) {
 	}
 	if c.DataFile == "" {
 		c.DataFile = "data/store.json"
+	}
+	if c.HTTPAddr == "" {
+		c.HTTPAddr = ":8080"
+	}
+	if c.MiniAppURL != "" {
+		if err := validateMiniAppURL(c.MiniAppURL); err != nil {
+			return Config{}, err
+		}
+		parsed, _ := url.Parse(c.MiniAppURL)
+		if parsed.Path != "" && parsed.Path != "/" && !strings.HasSuffix(parsed.Path, "/") {
+			c.MiniAppURL += "/"
+		}
 	}
 	if c.Channel != "" && !strings.HasPrefix(c.Channel, "@") && !strings.HasPrefix(c.Channel, "-") {
 		c.Channel = "@" + c.Channel
@@ -181,9 +196,13 @@ type Update struct {
 	Callback *Callback `json:"callback_query"`
 }
 type Button struct {
-	Text string `json:"text"`
-	Data string `json:"callback_data,omitempty"`
-	URL  string `json:"url,omitempty"`
+	Text   string      `json:"text"`
+	Data   string      `json:"callback_data,omitempty"`
+	URL    string      `json:"url,omitempty"`
+	WebApp *WebAppInfo `json:"web_app,omitempty"`
+}
+type WebAppInfo struct {
+	URL string `json:"url"`
 }
 type Markup struct {
 	InlineKeyboard [][]Button `json:"inline_keyboard"`
@@ -239,6 +258,15 @@ func (t *TG) configureCommands(ctx context.Context) error {
 		{"command": "orders", "description": "View your orders"},
 		{"command": "support", "description": "Contact support"},
 		{"command": "help", "description": "How to use the bot"},
+	}}, nil)
+}
+
+func (t *TG) configureMiniApp(ctx context.Context, publicURL string) error {
+	if publicURL == "" {
+		return nil
+	}
+	return t.call(ctx, "setChatMenuButton", map[string]any{"menu_button": map[string]any{
+		"type": "web_app", "text": "Open shop", "web_app": WebAppInfo{URL: publicURL},
 	}}, nil)
 }
 
@@ -342,6 +370,9 @@ func (a *App) broadcast(ctx context.Context, msg string, includeChannel bool) {
 
 func (a *App) home(ctx context.Context, chat, userID int64) {
 	rows := [][]Button{{{Text: "🛍 Shop", Data: "catalog"}, {Text: "📦 My orders", Data: "orders"}}, {{Text: "💬 Support", Data: "support"}}}
+	if a.cfg.MiniAppURL != "" {
+		rows = append([][]Button{{{Text: "Open Mini App", WebApp: &WebAppInfo{URL: a.cfg.MiniAppURL}}}}, rows...)
+	}
 	if admin(a, userID) {
 		rows = append(rows, []Button{{Text: "⚙️ Owner panel", Data: "admin:panel"}})
 	}
@@ -360,12 +391,7 @@ func (a *App) requireChannel(ctx context.Context, chat, userID int64) bool {
 	if admin(a, userID) || a.cfg.Channel == "" {
 		return true
 	}
-	var member struct {
-		Status   string `json:"status"`
-		IsMember bool   `json:"is_member"`
-	}
-	err := a.tg.call(ctx, "getChatMember", map[string]any{"chat_id": a.cfg.Channel, "user_id": userID}, &member)
-	joined := err == nil && (member.Status == "creator" || member.Status == "administrator" || member.Status == "member" || (member.Status == "restricted" && member.IsMember))
+	joined, err := a.channelMember(ctx, userID)
 	if joined {
 		return true
 	}
@@ -382,6 +408,19 @@ func (a *App) requireChannel(ctx context.Context, chat, userID int64) bool {
 	}
 	a.tg.send(ctx, chat, msg, &Markup{InlineKeyboard: rows})
 	return false
+}
+
+func (a *App) channelMember(ctx context.Context, userID int64) (bool, error) {
+	if admin(a, userID) || a.cfg.Channel == "" {
+		return true, nil
+	}
+	var member struct {
+		Status   string `json:"status"`
+		IsMember bool   `json:"is_member"`
+	}
+	err := a.tg.call(ctx, "getChatMember", map[string]any{"chat_id": a.cfg.Channel, "user_id": userID}, &member)
+	joined := err == nil && (member.Status == "creator" || member.Status == "administrator" || member.Status == "member" || (member.Status == "restricted" && member.IsMember))
+	return joined, err
 }
 
 func (a *App) setFlow(chat int64, f flow) { a.flows.Store(chat, f) }
@@ -1165,6 +1204,14 @@ func main() {
 	}
 	if err := app.tg.configureCommands(context.Background()); err != nil {
 		log.Printf("set commands: %v", err)
+	}
+	if err := app.tg.configureMiniApp(context.Background(), cfg.MiniAppURL); err != nil {
+		log.Printf("set Mini App menu button: %v", err)
+	}
+	if cfg.MiniAppURL != "" {
+		if err := app.startMiniAppServer(context.Background()); err != nil {
+			log.Fatal(err)
+		}
 	}
 	log.Printf("Doraemon Shop Bot started; owner=%d", cfg.OwnerID)
 	if err := app.run(context.Background()); err != nil {

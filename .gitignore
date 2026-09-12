@@ -1,2 +1,31 @@
+# Secrets and machine-specific environment files
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Runtime store data contains private delivery payloads
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Builds, coverage, and logs
+bin/
+dist/
+doraemon-bot
+*.exe
+*.out
+coverage.*
+*.log
+
+# Tooling and operating-system files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
 __pycache__/
 *.py[cod]
