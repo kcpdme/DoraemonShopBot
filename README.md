@@ -175,7 +175,7 @@ An example hardened systemd unit is included at `deploy/doraemon-shop.service`. 
 
 ## Contributing
 
-Issues and pull requests are welcome. Please keep changes focused, add tests for behavior changes, run `go test -race ./...` and `go vet ./...`, and never include real credentials or inventory in fixtures.
+Issues and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) before submitting changes and [SECURITY.md](SECURITY.md) before reporting a vulnerability. Please keep changes focused, add tests for behavior changes, run `go test -race ./...` and `go vet ./...`, and never include real credentials or inventory in fixtures.
 
 ## License
 
