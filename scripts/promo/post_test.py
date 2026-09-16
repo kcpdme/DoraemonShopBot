@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
 
-from post import CTA, HEADER, format_promo, load_products, parse_group, parse_groups
+from post import CTA, HEADER, format_promo, load_products, mark_posted, parse_group, parse_groups, seconds_until_due
 
 
 class ParseGroupTest(unittest.TestCase):
@@ -95,6 +96,30 @@ class CatalogTest(unittest.TestCase):
             products = load_products(path)
         self.assertEqual(products, [])
         self.assertEqual(format_promo(products), "")
+
+
+class ScheduleTest(unittest.TestCase):
+    def test_due_when_never_posted(self):
+        self.assertEqual(seconds_until_due({}), 0)
+
+    def test_waits_for_chosen_interval(self):
+        state = {"last_post_unix": 1000, "next_interval": 240}
+        self.assertEqual(seconds_until_due(state, now=1100), 140)
+        self.assertEqual(seconds_until_due(state, now=1240), 0)
+        self.assertLess(seconds_until_due(state, now=1300), 0)
+
+    def test_mark_posted_picks_interval_in_bounds(self):
+        os.environ["PROMO_MIN_SECONDS"] = "180"
+        os.environ["PROMO_MAX_SECONDS"] = "300"
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "promo.schedule"
+            wait = mark_posted(path, now=1_000_000)
+            self.assertGreaterEqual(wait, 180)
+            self.assertLessEqual(wait, 300)
+            remaining = seconds_until_due(json.loads(path.read_text()), now=1_000_000)
+            self.assertEqual(remaining, wait)
+        os.environ.pop("PROMO_MIN_SECONDS", None)
+        os.environ.pop("PROMO_MAX_SECONDS", None)
 
 
 if __name__ == "__main__":

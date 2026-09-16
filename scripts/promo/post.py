@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 """Post a catalog promo to Telegram groups with Telethon.
 
-One run sends one message per group, then exits. Point cron at this file
-once an hour after you have logged in a user session.
+One run sends one message per group, then exits. Cron should tick every
+minute; the script waits a random 3-5 minutes between successful posts.
+Use --force to post immediately.
 
 First-time login (interactive; saves the session file):
 
     python3 scripts/promo/post.py --login
 
-Hourly cron (after login):
+Cron (after login):
 
-    12 * * * * cd /path/to/DoraemonShopBot && scripts/promo/.venv/bin/python scripts/promo/post.py >> data/promo.log 2>&1
+    * * * * * cd /path/to/DoraemonShopBot && scripts/promo/.venv/bin/python scripts/promo/post.py >> data/promo.log 2>&1
 
 Required env (also loaded from repo-root .env if present):
 
@@ -23,6 +24,7 @@ import argparse
 import fcntl
 import json
 import os
+import random
 import sys
 import time
 from datetime import datetime, timezone
@@ -34,6 +36,8 @@ DEFAULT_GROUPS = ("ChatgptPlusDeal",)
 HEADER = "⚡ <b>Zenitsu Thunder Shop</b>"
 CTA = "Check bio for bot and order."
 TELEGRAM_TEXT_LIMIT = 4096
+DEFAULT_MIN_INTERVAL = 180
+DEFAULT_MAX_INTERVAL = 300
 
 
 def load_env_file(path: Path) -> None:
@@ -150,6 +154,76 @@ def format_promo(products: list[dict]) -> str:
         if len(text) <= TELEGRAM_TEXT_LIMIT:
             return text
     return escape(CTA)
+
+
+def env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise SystemExit(f"{name} must be an integer") from exc
+
+
+def interval_bounds() -> tuple[int, int]:
+    lo = env_int("PROMO_MIN_SECONDS", DEFAULT_MIN_INTERVAL)
+    hi = env_int("PROMO_MAX_SECONDS", DEFAULT_MAX_INTERVAL)
+    if lo < 0:
+        lo = 0
+    if hi < lo:
+        hi = lo
+    return lo, hi
+
+
+def pick_interval(lo: int, hi: int) -> int:
+    return random.randint(lo, hi) if hi else 0
+
+
+def schedule_path() -> Path:
+    return env_path("PROMO_SCHEDULE", "data/promo.schedule")
+
+
+def read_schedule(path: Path | None = None) -> dict:
+    target = path or schedule_path()
+    if not target.is_file():
+        return {}
+    try:
+        data = json.loads(target.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def write_schedule(state: dict, path: Path | None = None) -> None:
+    target = path or schedule_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+    os.chmod(target, 0o600)
+
+
+def seconds_until_due(state: dict, now: float | None = None) -> float:
+    last = state.get("last_post_unix")
+    if last is None:
+        return 0
+    wait = float(state.get("next_interval") or 0)
+    current = time.time() if now is None else now
+    return (float(last) + wait) - current
+
+
+def mark_posted(path: Path | None = None, now: float | None = None) -> int:
+    lo, hi = interval_bounds()
+    wait = pick_interval(lo, hi)
+    current = time.time() if now is None else now
+    write_schedule(
+        {
+            "last_post_unix": current,
+            "last_post": datetime.fromtimestamp(current, timezone.utc).isoformat(),
+            "next_interval": wait,
+        },
+        path,
+    )
+    return wait
 
 
 def acquire_lock(path: Path):
@@ -277,7 +351,7 @@ async def login(phone: str | None = None, code: str | None = None, password: str
         await client.disconnect()
 
 
-async def post(dry_run: bool) -> int:
+async def post(dry_run: bool, force: bool = False) -> int:
     products = load_products(env_path("DATA_FILE", "data/store.json"))
     groups = parse_groups(os.environ.get("PROMO_GROUPS"))
     text = format_promo(products)
@@ -291,6 +365,12 @@ async def post(dry_run: bool) -> int:
     if not text:
         print("no active products; skipping post")
         return 0
+
+    if not dry_run and not force:
+        remaining = seconds_until_due(read_schedule())
+        if remaining > 0:
+            print(f"skipping; next promo in {int(remaining)}s")
+            return 0
 
     print(f"{datetime.now(timezone.utc).isoformat()} products={len(products)} groups={','.join(groups)}")
     if dry_run:
@@ -324,7 +404,11 @@ async def post(dry_run: bool) -> int:
             except (RPCError, ValueError) as err:
                 print(f"failed {group}: {err}", file=sys.stderr)
                 failures += 1
-    return 1 if failures else 0
+    if failures:
+        return 1
+    wait = mark_posted()
+    print(f"next promo in {wait}s")
+    return 0
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -334,6 +418,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--code", help="Telegram login code, used with --login")
     parser.add_argument("--password", help="2FA cloud password, used with --login")
     parser.add_argument("--dry-run", action="store_true", help="print the promo and targets without sending")
+    parser.add_argument("--force", action="store_true", help="ignore the 3-5 minute schedule and post now")
     return parser.parse_args(argv)
 
 
@@ -349,7 +434,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         import asyncio
 
-        return asyncio.run(post(args.dry_run))
+        return asyncio.run(post(args.dry_run, args.force))
     except FileNotFoundError as err:
         print(str(err), file=sys.stderr)
         return 1

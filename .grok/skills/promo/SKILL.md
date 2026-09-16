@@ -1,16 +1,18 @@
 ---
 name: promo
-description: Post the live Zenitsu Thunder Shop catalog to Telegram groups from SSH host AwsHosting. Use when the user says promo, /promo, post promo, run promo, advertise, or wants a shop promo sent to groups.
+description: Post the live Zenitsu Thunder Shop catalog to Telegram groups from SSH host AwsHosting. Use when the user says do, do it, do promo, promo, or /promo. Send only on do/do it/do promo; if they only say promo, wait.
 ---
 
 # Promo
 
 The live shop, Telethon session, and catalog are on **AwsHosting**. Do not post from this laptop.
 
+Do **not** send when the user only says promo. Wait. Send only when they say **do**, **do it**, or **do promo**.
+
 ## Command
 
 ```bash
-ssh -o BatchMode=yes AwsHosting 'cd /opt/doraemon-shop-bot && scripts/promo/.venv/bin/python scripts/promo/post.py'
+ssh -o BatchMode=yes AwsHosting 'cd /opt/doraemon-shop-bot && scripts/promo/.venv/bin/python scripts/promo/post.py --force'
 ```
 
 Dry-run only when asked:
