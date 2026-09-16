@@ -29,3 +29,8 @@ coverage.*
 Thumbs.db
 __pycache__/
 *.py[cod]
+scripts/promo/.venv/
+
+# Telethon user sessions
+*.session
+*.session-journal
