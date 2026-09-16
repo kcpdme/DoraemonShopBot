@@ -194,7 +194,10 @@
       const copy = node("div");
       copy.append(node("strong", "", product.name));
       copy.append(node("small", "", `${product.sku} · ${product.priceUsdt.toFixed(2)} USDT · ${product.stock} available · ${product.active ? "active" : "hidden"}`));
-      card.append(copy);
+      const edit = node("button", "edit-price", "Edit price");
+      edit.type = "button";
+      edit.addEventListener("click", () => updateProductPrice(product));
+      card.append(copy, edit);
       root.append(card);
     });
   }
@@ -295,6 +298,26 @@
       tg?.HapticFeedback?.notificationOccurred("error");
     } finally {
       button.disabled = false;
+    }
+  }
+
+  async function updateProductPrice(product) {
+    const entered = window.prompt(`New USDT price for ${product.name}`, product.priceUsdt.toFixed(2));
+    if (entered === null) return;
+    const priceUsdt = Number(entered);
+    if (!Number.isFinite(priceUsdt) || priceUsdt <= 0) {
+      showNotice("Enter a positive price in USDT.");
+      return;
+    }
+    showNotice("");
+    try {
+      await api(`api/mini-app/admin/products/${encodeURIComponent(product.sku)}`, { method: "PATCH", body: JSON.stringify({ priceUsdt }) });
+      haptic("medium");
+      await loadAdmin();
+      showNotice("Product price updated.");
+    } catch (error) {
+      showNotice(error.message);
+      tg?.HapticFeedback?.notificationOccurred("error");
     }
   }
 

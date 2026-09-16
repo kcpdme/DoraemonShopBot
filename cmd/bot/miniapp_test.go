@@ -127,6 +127,12 @@ func TestMiniAppAdminRequiresOwnerAndManagesPrivateStock(t *testing.T) {
 		t.Fatalf("product create status=%d body=%s product=%+v", create.Code, create.Body.String(), store.data.Products["KEY-1"])
 	}
 
+	update := httptest.NewRecorder()
+	app.miniAppAdminProductItem(update, miniAppOwnerRequest(t, http.MethodPatch, "/api/mini-app/admin/products/KEY-1", "test-token", 7, `{"priceUsdt":9.99}`))
+	if update.Code != http.StatusOK || store.data.Products["KEY-1"].PriceUSDT != 9.99 {
+		t.Fatalf("price update status=%d body=%s product=%+v", update.Code, update.Body.String(), store.data.Products["KEY-1"])
+	}
+
 	add := httptest.NewRecorder()
 	app.miniAppAdminStock(add, miniAppOwnerRequest(t, http.MethodPost, "/api/mini-app/admin/stock", "test-token", 7, `{"sku":"KEY-1","payloads":"secret-one\nsecret-two"}`))
 	if add.Code != http.StatusCreated || len(store.data.Stock) != 2 {

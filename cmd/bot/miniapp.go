@@ -264,6 +264,63 @@ func (a *App) miniAppAdminProducts(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (a *App) miniAppAdminProductItem(w http.ResponseWriter, r *http.Request) {
+	if _, ok := a.miniAppOwner(w, r); !ok {
+		return
+	}
+	if r.Method != http.MethodPatch {
+		writeAPIError(w, http.StatusMethodNotAllowed, errors.New("method not allowed"))
+		return
+	}
+	const productPath = "/api/mini-app/admin/products/"
+	position := strings.Index(r.URL.Path, productPath)
+	productSKU := ""
+	if position >= 0 {
+		productSKU = sku(r.URL.Path[position+len(productPath):])
+	}
+	if productSKU == "" {
+		writeAPIError(w, http.StatusBadRequest, errors.New("invalid product"))
+		return
+	}
+	var input struct {
+		PriceUSDT *float64 `json:"priceUsdt"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1024)
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil || input.PriceUSDT == nil {
+		writeAPIError(w, http.StatusBadRequest, errors.New("provide a price in USDT"))
+		return
+	}
+	priceCents := math.Round(*input.PriceUSDT * 100)
+	if math.IsNaN(priceCents) || math.IsInf(priceCents, 0) || priceCents < 1 || priceCents > 1e9 {
+		writeAPIError(w, http.StatusBadRequest, errors.New("provide a valid price in USDT"))
+		return
+	}
+	a.store.mu.Lock()
+	product, exists := a.store.data.Products[productSKU]
+	if !exists {
+		a.store.mu.Unlock()
+		writeAPIError(w, http.StatusNotFound, errors.New("product not found"))
+		return
+	}
+	product.PriceUSDT = priceCents / 100
+	a.store.data.Products[productSKU] = product
+	err := a.store.saveLocked()
+	stock := 0
+	for _, item := range a.store.data.Stock {
+		if item.SKU == productSKU && !item.Sold && item.OrderID == "" {
+			stock++
+		}
+	}
+	a.store.mu.Unlock()
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, errors.New("could not update product price"))
+		return
+	}
+	writeJSON(w, http.StatusOK, miniAppAdminProduct{miniAppProduct: miniAppProduct{SKU: product.SKU, Name: product.Name, Description: product.Description, PriceUSDT: product.PriceUSDT, Stock: stock}, Active: product.Active, DeliveryInstruction: product.DeliveryInstruction})
+}
+
 func (a *App) miniAppAdminStock(w http.ResponseWriter, r *http.Request) {
 	if _, ok := a.miniAppOwner(w, r); !ok {
 		return
@@ -484,6 +541,7 @@ func (a *App) miniAppHandler() (http.Handler, error) {
 	mux.HandleFunc("/api/mini-app/catalog", a.miniAppCatalog)
 	mux.HandleFunc("/api/mini-app/orders", a.miniAppOrders)
 	mux.HandleFunc("/api/mini-app/admin/products", a.miniAppAdminProducts)
+	mux.HandleFunc("/api/mini-app/admin/products/", a.miniAppAdminProductItem)
 	mux.HandleFunc("/api/mini-app/admin/stock", a.miniAppAdminStock)
 	mux.HandleFunc("/api/mini-app/admin/stock/", a.miniAppAdminStockItem)
 	if publicURL, parseErr := url.Parse(a.cfg.MiniAppURL); parseErr == nil {
@@ -492,6 +550,7 @@ func (a *App) miniAppHandler() (http.Handler, error) {
 			mux.HandleFunc(prefix+"/api/mini-app/catalog", a.miniAppCatalog)
 			mux.HandleFunc(prefix+"/api/mini-app/orders", a.miniAppOrders)
 			mux.HandleFunc(prefix+"/api/mini-app/admin/products", a.miniAppAdminProducts)
+			mux.HandleFunc(prefix+"/api/mini-app/admin/products/", a.miniAppAdminProductItem)
 			mux.HandleFunc(prefix+"/api/mini-app/admin/stock", a.miniAppAdminStock)
 			mux.HandleFunc(prefix+"/api/mini-app/admin/stock/", a.miniAppAdminStockItem)
 			mux.Handle(prefix+"/", http.StripPrefix(prefix, miniAppStaticHandler(static)))
