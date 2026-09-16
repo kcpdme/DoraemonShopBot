@@ -41,7 +41,7 @@ func TestCheckoutQuantityRespectsAvailableStockAndShowsTotal(t *testing.T) {
 	a.store.data.Stock["reserved"] = StockItem{SKU: "DIGITAL", OrderID: "another-order"}
 	a.store.data.Stock["sold"] = StockItem{SKU: "DIGITAL", Sold: true}
 	text, kb := a.quantityText("DIGITAL")
-	if !strings.Contains(text, "Digital &lt;item&gt;") || !strings.Contains(text, "<b>3</b>") {
+	if !strings.Contains(text, "Digital &lt;item&gt;") || !strings.Contains(text, "3 available") {
 		t.Fatalf("quantity screen lost escaping or available stock: %s", text)
 	}
 	for _, data := range checkoutButtonData(kb) {
@@ -89,7 +89,7 @@ func TestPaymentCardUsesSnapshotAndSelectedWallet(t *testing.T) {
 	a := checkoutUIFixture(t, 3)
 	o := Order{ID: "order", SKU: "DIGITAL", ProductName: "Purchased <name>", Quantity: 3, Amount: 6.75, Network: "polygon", Status: "awaiting_payment", CreatedAt: time.Now()}
 	text := a.paymentText(o)
-	for _, want := range []string{"Purchased &lt;name&gt; × 3", "6.75 USDT", "0xPolygonRecipient", "Polygon PoS", "Submit TxID", "Time left:"} {
+	for _, want := range []string{"Purchased &lt;name&gt;", "<b>3</b>", "6.75 USDT", "0xPolygonRecipient", "Polygon PoS", "Submit your TxID", "remaining"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("payment card missing %q: %s", want, text)
 		}

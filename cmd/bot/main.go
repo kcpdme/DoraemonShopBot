@@ -101,11 +101,34 @@ type Order struct {
 	StockIDs                                       []string
 	CreatedAt, PaidAt                              time.Time
 }
+
+// WalletAccount is a custodial USDT balance. Amounts are stored in cents so
+// wallet credits and debits never depend on floating-point arithmetic.
+type WalletAccount struct {
+	BalanceCents int64
+	Entries      []WalletEntry
+}
+type WalletEntry struct {
+	ID, Kind, Reference string
+	AmountCents         int64
+	CreatedAt           time.Time
+}
+
+// WalletDeposit is an on-chain USDT top-up awaiting the same verification
+// checks used for a product order. It can be credited exactly once.
+type WalletDeposit struct {
+	ID, TxHash, Network, Status, PaymentIssue string
+	BuyerID, PaymentMessageID                 int64
+	AmountCents                               int64
+	CreatedAt, CreditedAt                     time.Time
+}
 type StoreData struct {
-	Products map[string]Product
-	Stock    map[string]StockItem
-	Orders   map[string]Order
-	Started  map[int64]string
+	Products       map[string]Product
+	Stock          map[string]StockItem
+	Orders         map[string]Order
+	Wallets        map[string]WalletAccount
+	WalletDeposits map[string]WalletDeposit
+	Started        map[int64]string
 }
 type Store struct {
 	mu        sync.Mutex
@@ -115,7 +138,7 @@ type Store struct {
 }
 
 func openStore(path string) (*Store, error) {
-	s := &Store{path: path, data: StoreData{Products: map[string]Product{}, Stock: map[string]StockItem{}, Orders: map[string]Order{}, Started: map[int64]string{}}}
+	s := &Store{path: path, data: StoreData{Products: map[string]Product{}, Stock: map[string]StockItem{}, Orders: map[string]Order{}, Wallets: map[string]WalletAccount{}, WalletDeposits: map[string]WalletDeposit{}, Started: map[int64]string{}}}
 	s.committed, _ = json.Marshal(s.data)
 	b, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -135,6 +158,12 @@ func openStore(path string) (*Store, error) {
 	}
 	if s.data.Orders == nil {
 		s.data.Orders = map[string]Order{}
+	}
+	if s.data.Wallets == nil {
+		s.data.Wallets = map[string]WalletAccount{}
+	}
+	if s.data.WalletDeposits == nil {
+		s.data.WalletDeposits = map[string]WalletDeposit{}
 	}
 	if s.data.Started == nil {
 		s.data.Started = map[int64]string{}
@@ -255,6 +284,7 @@ func (t *TG) configureCommands(ctx context.Context) error {
 	return t.call(ctx, "setMyCommands", map[string]any{"commands": []map[string]string{
 		{"command": "start", "description": "Open the shop menu"},
 		{"command": "shop", "description": "Browse available products"},
+		{"command": "wallet", "description": "View or add USDT wallet funds"},
 		{"command": "orders", "description": "View your orders"},
 		{"command": "support", "description": "Contact support"},
 		{"command": "help", "description": "How to use the bot"},
@@ -334,9 +364,9 @@ func (a *App) productsText() (string, *Markup) {
 	}
 	sort.Slice(ps, func(i, j int) bool { return ps[i].CreatedAt.After(ps[j].CreatedAt) })
 	if len(ps) == 0 {
-		return "🛍 <b>Shop</b>\n\nNo products are available right now.", nil
+		return "🛍 <b>ZENITSU THUNDER SHOP</b>\n<i>Digital access · automatic delivery</i>\n\nNo products are available right now. Restocks are announced in our updates channel.", nil
 	}
-	text := "🛍 <b>Available digital goods</b>\n\nTap a product to see its description and stock."
+	text := "🛍 <b>SHOP DIGITAL GOODS</b>\n<i>Choose a product to see the full details.</i>\n\n⚡ Fast checkout · 🔒 Secure USDT · 📦 Private delivery"
 	rows := [][]Button{}
 	for _, p := range ps {
 		n := 0
@@ -345,7 +375,11 @@ func (a *App) productsText() (string, *Markup) {
 				n++
 			}
 		}
-		rows = append(rows, []Button{{Text: fmt.Sprintf("%s · %.2f USDT · %d left", p.Name, p.PriceUSDT, n), Data: "product:" + p.SKU}})
+		availability := fmt.Sprintf("%d available", n)
+		if n == 0 {
+			availability = "Sold out"
+		}
+		rows = append(rows, []Button{{Text: fmt.Sprintf("🛒 %s · $%.2f · %s", p.Name, p.PriceUSDT, availability), Data: "product:" + p.SKU}})
 	}
 	return text, &Markup{InlineKeyboard: rows}
 }
@@ -369,14 +403,14 @@ func (a *App) broadcast(ctx context.Context, msg string, includeChannel bool) {
 }
 
 func (a *App) home(ctx context.Context, chat, userID int64) {
-	rows := [][]Button{{{Text: "🛍 Shop", Data: "catalog"}, {Text: "📦 My orders", Data: "orders"}}, {{Text: "💬 Support", Data: "support"}}}
+	rows := [][]Button{{{Text: "🛍 Shop", Data: "catalog"}}, {{Text: "💰 My wallet", Data: "wallet"}, {Text: "📦 My orders", Data: "orders"}}, {{Text: "💬 Support", Data: "support"}}}
 	if a.cfg.MiniAppURL != "" {
 		rows = append([][]Button{{{Text: "Open Mini App", WebApp: &WebAppInfo{URL: a.cfg.MiniAppURL}}}}, rows...)
 	}
 	if admin(a, userID) {
 		rows = append(rows, []Button{{Text: "⚙️ Owner panel", Data: "admin:panel"}})
 	}
-	a.tg.send(ctx, chat, "🏪 <b>Doraemon Shop</b>\n\nDigital goods with automatic USDT payment verification and private delivery.\n\nChoose an option below.", &Markup{InlineKeyboard: rows})
+	a.tg.send(ctx, chat, "⚡ <b>WELCOME TO ZENITSU THUNDER SHOP</b>\n<i>Premium digital access, delivered automatically.</i>\n\n🛍 <b>Shop</b> — browse live products\n💰 <b>My wallet</b> — load USDT and pay instantly\n📦 <b>My orders</b> — check payment and delivery\n💬 <b>Support</b> — get help in this chat\n\n🔒 Pay with USDT on BNB Smart Chain or Polygon. Your digital items arrive privately after payment confirmation.", &Markup{InlineKeyboard: rows})
 }
 
 func (a *App) channelURL() string {
@@ -494,6 +528,21 @@ func (a *App) handleFlow(ctx context.Context, m *Message, text string) bool {
 		} else {
 			a.clearFlow(m.Chat.ID)
 		}
+		return true
+	case "wallet_amount":
+		cents, err := parseUSDTAmount(text)
+		if err != nil {
+			a.tg.send(ctx, m.Chat.ID, "💰 "+esc(err.Error()), nil)
+			return true
+		}
+		a.clearFlow(m.Chat.ID)
+		a.walletNetworkScreen(ctx, m.Chat.ID, cents)
+		return true
+	case "wallet_proof":
+		if text == "" {
+			return true
+		}
+		a.submitWalletTxHash(ctx, m.Chat.ID, m.From.ID, f.SKU, text)
 		return true
 	case "proof":
 		if text == "" {
@@ -630,7 +679,7 @@ func (a *App) handleMessage(ctx context.Context, m *Message) {
 	if len(parts) > 0 {
 		cmd = strings.Split(parts[0], "@")[0]
 	}
-	if !admin(a, m.From.ID) && (cmd == "/start" || cmd == "/shop") && !a.requireChannel(ctx, m.Chat.ID, m.From.ID) {
+	if !admin(a, m.From.ID) && (cmd == "/start" || cmd == "/shop" || cmd == "/wallet") && !a.requireChannel(ctx, m.Chat.ID, m.From.ID) {
 		return
 	}
 	switch cmd {
@@ -640,7 +689,9 @@ func (a *App) handleMessage(ctx context.Context, m *Message) {
 		t, k := a.productsText()
 		a.tg.send(ctx, m.Chat.ID, t, k)
 	case "/help":
-		a.tg.send(ctx, m.Chat.ID, "/shop — browse products\n/orders — view orders\n/paid ORDER_ID TX_HASH — submit payment\n/support — contact support\n/cancel — cancel an active step", nil)
+		a.tg.send(ctx, m.Chat.ID, "/shop — browse products\n/wallet — view or add wallet USDT\n/orders — view orders\n/paid ORDER_ID TX_HASH — submit payment\n/support — contact support\n/cancel — cancel an active step", nil)
+	case "/wallet":
+		a.walletHome(ctx, m.Chat.ID, m.From.ID)
 	case "/orders":
 		a.sendOrders(ctx, m.Chat.ID, m.From.ID)
 	case "/paid":
@@ -1067,17 +1118,22 @@ func (a *App) handleCallback(ctx context.Context, c *Callback) {
 		}
 		return
 	}
-	shopping := c.Data == "catalog" || c.Data == "home" || strings.HasPrefix(c.Data, "product:") || strings.HasPrefix(c.Data, "buy:") || strings.HasPrefix(c.Data, "qty:") || strings.HasPrefix(c.Data, "network:")
+	shopping := c.Data == "catalog" || c.Data == "home" || c.Data == "wallet" || strings.HasPrefix(c.Data, "wallet:") || strings.HasPrefix(c.Data, "walletbuy:") || strings.HasPrefix(c.Data, "product:") || strings.HasPrefix(c.Data, "buy:") || strings.HasPrefix(c.Data, "qty:") || strings.HasPrefix(c.Data, "network:")
 	if shopping && !admin(a, c.From.ID) && !a.requireChannel(ctx, chat, c.From.ID) {
 		return
 	}
 	a.clearFlow(chat)
+	if a.handleWalletCallback(ctx, c, chat) {
+		return
+	}
 	if a.handleCheckoutCallback(ctx, c, chat) {
 		return
 	}
 	switch {
 	case c.Data == "home":
 		a.home(ctx, chat, c.From.ID)
+	case c.Data == "wallet":
+		a.walletHome(ctx, chat, c.From.ID)
 	case c.Data == "orders":
 		a.sendOrders(ctx, chat, c.From.ID)
 	case strings.HasPrefix(c.Data, "orders:"):

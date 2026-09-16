@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math"
 	"sort"
-	"strings"
 	"time"
 )
 
@@ -19,7 +18,7 @@ func (a *App) createOrder(buyer *User, code, network string) (Order, error) {
 func (a *App) createOrderQuantity(buyer *User, code, network string, quantity int) (Order, error) {
 	a.opMu.Lock()
 	defer a.opMu.Unlock()
-	if buyer == nil || buyer.ID <= 0 || (network != "bep20" && network != "polygon") || quantity < 1 || quantity > 50 {
+	if buyer == nil || buyer.ID <= 0 || (network != "bep20" && network != "polygon" && network != "wallet") || quantity < 1 || quantity > 50 {
 		return Order{}, errors.New("Choose a valid network and a quantity between 1 and 50.")
 	}
 	a.store.mu.Lock()
@@ -94,13 +93,11 @@ func (a *App) submitTxHash(ctx context.Context, chat, buyer int64, orderID, hash
 		_ = a.tg.send(ctx, chat, "The payment window has closed. If you already sent funds, contact support with this order and TxID. Do not pay again.", nil)
 		return
 	}
-	for _, other := range a.store.data.Orders {
-		if other.ID != o.ID && other.Network == o.Network && strings.EqualFold(other.TxHash, hash) && (other.Status == "payment_submitted" || other.Status == "delivery_pending" || other.Status == "delivered") {
-			a.store.mu.Unlock()
-			a.opMu.Unlock()
-			_ = a.tg.send(ctx, chat, "That transaction is already attached to another order. Contact support if this is unexpected.", nil)
-			return
-		}
+	if a.txHashInUseLocked(o.Network, hash, o.ID) {
+		a.store.mu.Unlock()
+		a.opMu.Unlock()
+		_ = a.tg.send(ctx, chat, "That transaction is already attached to another order or wallet top-up. Contact support if this is unexpected.", nil)
+		return
 	}
 	o.TxHash = hash
 	o.Status = "payment_submitted"
@@ -256,6 +253,12 @@ func deliveryMessages(o Order, payloads []string) []string {
 	return messages
 }
 
+// saleAnnouncement intentionally contains no buyer fields, handles, chat IDs,
+// order IDs, or delivery payloads. The public channel only receives the sale.
+func saleAnnouncement(o Order) string {
+	return fmt.Sprintf("🎉 <b>NEW PURCHASE</b>\n\n<blockquote>📦 Product: <b>%s</b>\n🔢 Quantity: <b>%d</b>\n💵 Total: <b>$%.2f USDT</b></blockquote>\n\n✅ Payment verified · Delivered automatically", esc(o.ProductName), o.Quantity, o.Amount)
+}
+
 func (a *App) deliverLocked(ctx context.Context, orderID string) error {
 	a.store.mu.Lock()
 	o, ok := a.store.data.Orders[orderID]
@@ -321,7 +324,7 @@ func (a *App) deliverLocked(ctx context.Context, orderID string) error {
 	}
 	_ = a.sendPaymentCard(ctx, o.BuyerID, o, o.PaymentMessageID)
 	if a.cfg.Channel != "" {
-		_ = a.tg.send(ctx, a.cfg.Channel, fmt.Sprintf("🛍 <b>Purchase completed</b>\n\n%s × %d\n✅ Delivered successfully", esc(o.ProductName), o.Quantity), nil)
+		_ = a.tg.send(ctx, a.cfg.Channel, saleAnnouncement(o), nil)
 	}
 	_ = a.tg.send(ctx, a.cfg.OwnerID, "✅ Delivered order <code>"+o.ID+"</code> — "+esc(o.ProductName), nil)
 	return nil
@@ -332,11 +335,18 @@ func (a *App) verifyLoop(ctx context.Context) {
 	defer ticker.Stop()
 	for {
 		a.expireUnpaidOrders(ctx)
+		a.expireWalletDeposits(ctx)
 		a.store.mu.Lock()
 		orders := []Order{}
+		deposits := []WalletDeposit{}
 		for _, o := range a.store.data.Orders {
 			if proofAllowed(o) || o.Status == "delivery_pending" {
 				orders = append(orders, o)
+			}
+		}
+		for _, d := range a.store.data.WalletDeposits {
+			if d.Status == "awaiting_payment" || d.Status == "proof_invalid" || d.Status == "payment_submitted" {
+				deposits = append(deposits, d)
 			}
 		}
 		a.store.mu.Unlock()
@@ -349,6 +359,16 @@ func (a *App) verifyLoop(ctx context.Context) {
 				a.verifyOrder(ctx, o.ID)
 			} else if o.PaymentMessageID > 0 {
 				_ = a.sendPaymentCard(ctx, o.BuyerID, o, o.PaymentMessageID)
+			}
+		}
+		for _, d := range deposits {
+			if ctx.Err() != nil {
+				return
+			}
+			if d.Status == "payment_submitted" {
+				a.verifyWalletDeposit(ctx, d.ID)
+			} else if d.PaymentMessageID > 0 {
+				_ = a.sendWalletDepositCard(ctx, d.BuyerID, d, d.PaymentMessageID)
 			}
 		}
 		select {

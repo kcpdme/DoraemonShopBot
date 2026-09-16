@@ -38,6 +38,13 @@ func (a *App) detachPaymentMessage(chat, messageID int64) error {
 			changed = true
 		}
 	}
+	for id, deposit := range a.store.data.WalletDeposits {
+		if deposit.BuyerID == chat && deposit.PaymentMessageID == messageID {
+			deposit.PaymentMessageID = 0
+			a.store.data.WalletDeposits[id] = deposit
+			changed = true
+		}
+	}
 	if changed {
 		return a.store.saveLocked()
 	}
@@ -45,7 +52,7 @@ func (a *App) detachPaymentMessage(chat, messageID int64) error {
 }
 
 func checkoutNavigation() *Markup {
-	return &Markup{InlineKeyboard: [][]Button{{{Text: "🛍 Browse shop", Data: "catalog"}, {Text: "💬 Support", Data: "support"}}}}
+	return &Markup{InlineKeyboard: [][]Button{{{Text: "🛍 Browse shop", Data: "catalog"}}, {{Text: "📦 My orders", Data: "orders"}, {Text: "💬 Support", Data: "support"}}}}
 }
 
 // checkoutScreen keeps a button-driven checkout in one message. Old messages and
@@ -81,14 +88,14 @@ func (a *App) productText(code string) (string, *Markup) {
 	if !ok || !p.Active {
 		return "This product is no longer available. Explore the shop for something else.", checkoutNavigation()
 	}
-	text := fmt.Sprintf("📦 <b>%s</b>\n\n%s\n\n💵 <b>%.2f USDT</b> per item\n✅ Available: <b>%d</b>\n\n⚡ Your digital items and delivery instructions arrive here after payment is confirmed.", esc(p.Name), esc(p.Description), p.PriceUSDT, stock)
+	text := fmt.Sprintf("🛍 <b>PRODUCT DETAILS</b>\n\n📦 <b>%s</b>\n\n%s\n\n<blockquote>💵 <b>$%.2f USDT</b> per code\n📊 <b>%d available</b>\n⚡ Automatic private delivery after payment</blockquote>\n\nChoose your quantity to continue.", esc(p.Name), esc(p.Description), p.PriceUSDT, stock)
 	rows := [][]Button{}
 	if stock > 0 {
-		rows = append(rows, []Button{{Text: "🛒 Buy now", Data: "buy:" + code}})
+		rows = append(rows, []Button{{Text: fmt.Sprintf("🛒 Buy now · $%.2f", p.PriceUSDT), Data: "buy:" + code}})
 	} else {
 		text += "\n\n<b>Currently sold out.</b> Restocks are announced in the updates channel."
 	}
-	rows = append(rows, []Button{{Text: "‹ Back to shop", Data: "catalog"}, {Text: "💬 Support", Data: "support"}})
+	rows = append(rows, []Button{{Text: "‹ Back to shop", Data: "catalog"}}, []Button{{Text: "💬 Need help?", Data: "support"}})
 	return text, &Markup{InlineKeyboard: rows}
 }
 
@@ -125,12 +132,12 @@ func (a *App) quantityText(sku string) (string, *Markup) {
 	limit := min(stock, maxCheckoutQuantity)
 	rows := [][]Button{}
 	row := []Button{}
-	for _, qty := range []int{1, 2, 3, 5, 10} {
+	for _, qty := range []int{1, 2, 3, 5, 10, 15, 20, 25} {
 		if qty > limit {
 			continue
 		}
-		row = append(row, Button{Text: fmt.Sprintf("%d × · %.2f USDT", qty, p.PriceUSDT*float64(qty)), Data: fmt.Sprintf("qty:%s:%d", sku, qty)})
-		if len(row) == 2 {
+		row = append(row, Button{Text: fmt.Sprintf("%d ×", qty), Data: fmt.Sprintf("qty:%s:%d", sku, qty)})
+		if len(row) == 4 {
 			rows = append(rows, row)
 			row = nil
 		}
@@ -139,10 +146,11 @@ func (a *App) quantityText(sku string) (string, *Markup) {
 		rows = append(rows, row)
 	}
 	if limit > 1 {
-		rows = append(rows, []Button{{Text: "✏️ Enter quantity", Data: "qty:" + sku + ":custom"}})
+		rows = append(rows, []Button{{Text: "✏️ Custom amount", Data: "qty:" + sku + ":custom"}})
 	}
-	rows = append(rows, []Button{{Text: "‹ Product details", Data: "product:" + sku}, {Text: "🏠 Menu", Data: "home"}})
-	return fmt.Sprintf("🛍 <b>Choose your quantity</b>\n<i>Step 1 of 3 · Quantity</i>\n\n📦 %s\n💵 Unit price: <b>%.2f USDT</b>\n✅ Available: <b>%d</b>\n\nHow many would you like?", esc(p.Name), p.PriceUSDT, stock), &Markup{InlineKeyboard: rows}
+	rows = append(rows, []Button{{Text: "🛒 Continue to payment", Data: fmt.Sprintf("qty:%s:1", sku)}})
+	rows = append(rows, []Button{{Text: "‹ Back to product", Data: "product:" + sku}, {Text: "🏠 Menu", Data: "home"}})
+	return fmt.Sprintf("🔢 <b>SELECT QUANTITY</b>\n<i>Step 1 of 3 · Quantity</i>\n\n📦 <b>%s</b>\n💵 $%.2f per code · 📊 %d available\n\n<blockquote>🧾 1 × $%.2f\n💰 Total: <b>$%.2f USDT</b></blockquote>\n\nHow many codes would you like?", esc(p.Name), p.PriceUSDT, stock, p.PriceUSDT, p.PriceUSDT), &Markup{InlineKeyboard: rows}
 }
 
 func (a *App) networkChoice(sku string, qty int) (string, *Markup, error) {
@@ -150,11 +158,12 @@ func (a *App) networkChoice(sku string, qty int) (string, *Markup, error) {
 	if err != nil {
 		return "", nil, err
 	}
-	text := fmt.Sprintf("💳 <b>Choose your payment network</b>\n<i>Step 2 of 3 · Network</i>\n\n📦 %s\n🔢 Quantity: <b>%d</b>\n💵 Total: <b>%.2f USDT</b>\n\nSelect the same network you will use in your wallet or exchange. Your stock is reserved when you continue.", esc(p.Name), qty, p.PriceUSDT*float64(qty))
+	text := fmt.Sprintf("💳 <b>SELECT PAYMENT METHOD</b>\n<i>Step 2 of 3 · Network</i>\n\n📦 <b>%s</b> × <b>%d</b>\n💰 Total: <b>$%.2f USDT</b>\n\nChoose the network you will use in your wallet or exchange. Your stock is reserved when you continue.", esc(p.Name), qty, p.PriceUSDT*float64(qty))
 	kb := &Markup{InlineKeyboard: [][]Button{
-		{{Text: "🟡 USDT · BNB Smart Chain (BEP-20)", Data: fmt.Sprintf("network:bep20:%s:%d", sku, qty)}},
-		{{Text: "🟣 USDT · Polygon", Data: fmt.Sprintf("network:polygon:%s:%d", sku, qty)}},
-		{{Text: "‹ Change quantity", Data: "buy:" + sku}, {Text: "💬 Support", Data: "support"}},
+		{{Text: "🟡 Pay with USDT · BNB Smart Chain (BEP-20)", Data: fmt.Sprintf("network:bep20:%s:%d", sku, qty)}},
+		{{Text: "🟣 Pay with USDT · Polygon", Data: fmt.Sprintf("network:polygon:%s:%d", sku, qty)}},
+		{{Text: "💰 Pay from wallet balance", Data: fmt.Sprintf("walletbuy:%s:%d", sku, qty)}},
+		{{Text: "‹ Change quantity", Data: "buy:" + sku}, {Text: "💬 Need help?", Data: "support"}},
 	}}
 	return text, kb, nil
 }
@@ -169,6 +178,9 @@ func (a *App) showNetworkChoice(ctx context.Context, chat int64, sku string, qty
 }
 
 func paymentNetwork(network string) (string, string, string) {
+	if network == "wallet" {
+		return "💰 Wallet balance", "Wallet balance", ""
+	}
 	if network == "polygon" {
 		return "🟣 USDT · Polygon", "Polygon PoS", "https://polygonscan.com/tx/"
 	}
@@ -191,7 +203,7 @@ func (a *App) paymentText(o Order) string {
 	if quantity < 1 {
 		quantity = 1
 	}
-	summary := fmt.Sprintf("📦 %s × %d\n🧾 Order: <code>%s</code>\n💵 Total: <b>%.2f USDT</b>", esc(name), quantity, esc(o.ID), o.Amount)
+	summary := fmt.Sprintf("📦 <b>%s</b> × <b>%d</b>\n🧾 Order: <code>%s</code>\n💰 Total: <b>$%.2f USDT</b>", esc(name), quantity, esc(o.ID), o.Amount)
 	if o.Status == "proof_invalid" {
 		text := "⚠️ <b>This transaction cannot pay for this order</b>\n\n" + summary + "\n\n" + esc(o.PaymentIssue)
 		if time.Now().Before(o.CreatedAt.Add(30 * time.Minute)) {
@@ -229,19 +241,19 @@ func (a *App) paymentText(o Order) string {
 		return "⌛ <b>Payment window ended</b>\n\n" + summary + "\n\nDo not send a new payment to this order. If you already paid, contact support with your TxID. Otherwise, return to the shop to start a fresh checkout."
 	}
 	secondsLeft := max(0, int(time.Until(expires).Seconds()))
-	return fmt.Sprintf("%s\n<i>Step 3 of 3 · Pay &amp; receive</i>\n\n%s\n\n<b>Send exactly</b>\n<blockquote><b>%.2f USDT</b></blockquote>\n\n<b>To this wallet</b> · tap to copy\n<code>%s</code>\n\n🌐 Network: <b>%s</b>\n⏳ Time left: <b>%02d:%02d</b> · ends %s UTC\n\n1. Send USDT on the network above. The wallet must receive the exact amount after withdrawal fees.\n2. Tap <b>I've paid · Submit TxID</b> and paste your transaction hash or explorer link.\n3. Receive your items here after <b>3 confirmations</b>.\n\nHave your TxID ready before the reservation ends.", "<b>"+esc(title)+"</b>", summary, o.Amount, esc(addr), esc(network), secondsLeft/60, secondsLeft%60, expires.UTC().Format("15:04"))
+	return fmt.Sprintf("💳 <b>COMPLETE YOUR PAYMENT</b>\n<i>Step 3 of 3 · Pay &amp; receive</i>\n\n%s\n\n<blockquote>💵 Send exactly <b>$%.2f USDT</b>\n🌐 %s\n⏳ %02d:%02d remaining</blockquote>\n\n<b>1. Copy this wallet address</b>\n<code>%s</code>\n\n<b>2. Send USDT on %s</b>\nUse the exact amount shown above.\n\n<b>3. Submit your TxID</b>\nYour items arrive automatically after 3 confirmations.\n\n<i>Reservation ends at %s UTC. Do not send funds after it expires.</i>", "<b>"+esc(title)+"</b>\n"+summary, o.Amount, esc(network), secondsLeft/60, secondsLeft%60, esc(addr), esc(network), expires.UTC().Format("15:04"))
 }
 
 func paymentMarkup(o Order) *Markup {
 	rows := [][]Button{}
 	active := (o.Status == "awaiting_payment" || o.Status == "proof_invalid") && time.Now().Before(o.CreatedAt.Add(30*time.Minute))
 	if active {
-		label := "✅ I've paid · Submit TxID"
+		label := "🧾 I've paid · Submit TxID"
 		if o.Status == "proof_invalid" {
 			label = "🧾 Submit a different TxID"
 		}
 		rows = append(rows, []Button{{Text: label, Data: "proof:" + o.ID}})
-		rows = append(rows, []Button{{Text: "🔄 Refresh payment", Data: "pay:" + o.ID}})
+		rows = append(rows, []Button{{Text: "🔄 Refresh checkout", Data: "pay:" + o.ID}})
 	}
 	if o.Status == "payment_submitted" {
 		rows = append(rows, []Button{{Text: "🔄 Check payment now", Data: "check:" + o.ID}})
