@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -94,6 +95,59 @@ func TestMiniAppCatalogRequiresSignedTelegramUser(t *testing.T) {
 	app.miniAppCatalog(response, request)
 	if response.Code != http.StatusUnauthorized {
 		t.Fatalf("unsigned request status=%d", response.Code)
+	}
+}
+
+func miniAppOwnerRequest(t *testing.T, method, target, token string, owner int64, body string) *http.Request {
+	t.Helper()
+	request := httptest.NewRequest(method, target, bytes.NewBufferString(body))
+	request.Header.Set("Authorization", "tma "+signedInitData(t, token, User{ID: owner, FirstName: "Owner"}, time.Now()))
+	request.Header.Set("Content-Type", "application/json")
+	return request
+}
+
+func TestMiniAppAdminRequiresOwnerAndManagesPrivateStock(t *testing.T) {
+	store, err := openStore(filepath.Join(t.TempDir(), "store.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := &App{cfg: Config{Token: "test-token", OwnerID: 7}, store: store}
+
+	nonOwner := httptest.NewRequest(http.MethodGet, "/api/mini-app/admin/products", nil)
+	nonOwner.Header.Set("Authorization", "tma "+signedInitData(t, "test-token", User{ID: 8}, time.Now()))
+	denied := httptest.NewRecorder()
+	app.miniAppAdminProducts(denied, nonOwner)
+	if denied.Code != http.StatusForbidden {
+		t.Fatalf("non-owner admin status=%d body=%s", denied.Code, denied.Body.String())
+	}
+
+	create := httptest.NewRecorder()
+	app.miniAppAdminProducts(create, miniAppOwnerRequest(t, http.MethodPost, "/api/mini-app/admin/products", "test-token", 7, `{"sku":"KEY-1","name":"Access key","priceUsdt":4.5,"description":"One private key","deliveryInstruction":"Redeem the key"}`))
+	if create.Code != http.StatusCreated || store.data.Products["KEY-1"].PriceUSDT != 4.5 {
+		t.Fatalf("product create status=%d body=%s product=%+v", create.Code, create.Body.String(), store.data.Products["KEY-1"])
+	}
+
+	add := httptest.NewRecorder()
+	app.miniAppAdminStock(add, miniAppOwnerRequest(t, http.MethodPost, "/api/mini-app/admin/stock", "test-token", 7, `{"sku":"KEY-1","payloads":"secret-one\nsecret-two"}`))
+	if add.Code != http.StatusCreated || len(store.data.Stock) != 2 {
+		t.Fatalf("stock add status=%d body=%s stock=%d", add.Code, add.Body.String(), len(store.data.Stock))
+	}
+
+	list := httptest.NewRecorder()
+	app.miniAppAdminStock(list, miniAppOwnerRequest(t, http.MethodGet, "/api/mini-app/admin/stock?sku=KEY-1", "test-token", 7, ""))
+	if list.Code != http.StatusOK || strings.Contains(list.Body.String(), "secret-one") || strings.Contains(list.Body.String(), "secret-two") {
+		t.Fatalf("admin stock list leaked payload or failed: status=%d body=%s", list.Code, list.Body.String())
+	}
+
+	var stockID string
+	for id := range store.data.Stock {
+		stockID = id
+		break
+	}
+	remove := httptest.NewRecorder()
+	app.miniAppAdminStockItem(remove, miniAppOwnerRequest(t, http.MethodDelete, "/api/mini-app/admin/stock/"+stockID, "test-token", 7, ""))
+	if remove.Code != http.StatusNoContent || len(store.data.Stock) != 1 {
+		t.Fatalf("stock removal status=%d stock=%d", remove.Code, len(store.data.Stock))
 	}
 }
 

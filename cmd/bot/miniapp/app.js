@@ -2,9 +2,9 @@
   "use strict";
 
   const tg = window.Telegram?.WebApp;
-  const state = { products: [], selected: null, order: null };
+  const state = { products: [], selected: null, order: null, isOwner: false, adminProducts: [], stock: [] };
   const el = (id) => document.getElementById(id);
-  const views = ["shop", "orders", "checkout", "success"];
+  const views = ["shop", "orders", "checkout", "success", "admin"];
 
   if (tg) {
     tg.ready();
@@ -22,7 +22,8 @@
     views.forEach((view) => el(`${view}-view`).classList.toggle("hidden", view !== name));
     el("tabs").classList.toggle("hidden", name === "checkout" || name === "success");
     document.querySelectorAll("[data-view]").forEach((button) => button.classList.toggle("active", button.dataset.view === name));
-    el("title").textContent = name === "orders" ? "My orders" : "Digital goods";
+    const titles = { shop: "Digital goods", orders: "My orders", checkout: "Checkout", success: "Payment", admin: "Store admin" };
+    el("title").textContent = titles[name] || "Digital goods";
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -79,6 +80,9 @@
     try {
       const data = await api("api/mini-app/catalog");
       state.products = data.products || [];
+      state.isOwner = Boolean(data.isOwner);
+      el("admin-tab").classList.toggle("hidden", !state.isOwner);
+      el("tabs").classList.toggle("admin-enabled", state.isOwner);
       renderCatalog();
     } catch (error) {
       el("catalog").replaceChildren(empty(error.message));
@@ -173,6 +177,160 @@
     }
   }
 
+  function selectedAdminSKU() {
+    return el("stock-sku").value || state.adminProducts[0]?.sku || "";
+  }
+
+  function renderAdminProducts() {
+    const root = el("admin-products");
+    root.replaceChildren();
+    el("admin-product-count").textContent = `${state.adminProducts.length} products`;
+    if (!state.adminProducts.length) {
+      root.append(empty("Create your first product above."));
+      return;
+    }
+    state.adminProducts.forEach((product) => {
+      const card = node("article", "admin-product");
+      const copy = node("div");
+      copy.append(node("strong", "", product.name));
+      copy.append(node("small", "", `${product.sku} · ${product.priceUsdt.toFixed(2)} USDT · ${product.stock} available · ${product.active ? "active" : "hidden"}`));
+      card.append(copy);
+      root.append(card);
+    });
+  }
+
+  function renderStockSelect() {
+    const select = el("stock-sku");
+    const prior = select.value;
+    select.replaceChildren();
+    state.adminProducts.forEach((product) => {
+      const option = node("option", "", `${product.name} (${product.sku})`);
+      option.value = product.sku;
+      select.append(option);
+    });
+    if (prior && state.adminProducts.some((product) => product.sku === prior)) select.value = prior;
+  }
+
+  function renderAdminStock() {
+    const root = el("admin-stock");
+    root.replaceChildren();
+    el("admin-stock-count").textContent = `${state.stock.length} items`;
+    if (!state.stock.length) {
+      root.append(empty("No stock items for this product."));
+      return;
+    }
+    state.stock.forEach((item) => {
+      const card = node("article", "admin-stock-item");
+      const copy = node("div");
+      copy.append(node("strong", "", item.id));
+      copy.append(node("small", "", `${item.sku} · added ${new Date(item.addedAt).toLocaleString()}`));
+      const actions = node("div");
+      actions.append(node("span", `state ${item.state}`, item.state));
+      if (item.state === "available") {
+        const remove = node("button", "remove-stock", "Remove");
+        remove.type = "button";
+        remove.addEventListener("click", () => removeStock(item.id));
+        actions.append(remove);
+      }
+      card.append(copy, actions);
+      root.append(card);
+    });
+  }
+
+  async function loadAdminStock() {
+    const sku = selectedAdminSKU();
+    if (!sku) {
+      state.stock = [];
+      renderAdminStock();
+      return;
+    }
+    const root = el("admin-stock");
+    root.replaceChildren(empty("Loading stock…"));
+    try {
+      const data = await api(`api/mini-app/admin/stock?sku=${encodeURIComponent(sku)}`);
+      state.stock = data.stock || [];
+      renderAdminStock();
+    } catch (error) {
+      root.replaceChildren(empty(error.message));
+      showNotice(error.message);
+    }
+  }
+
+  async function loadAdmin() {
+    if (!state.isOwner) return;
+    showView("admin");
+    showNotice("");
+    el("admin-products").replaceChildren(empty("Loading products…"));
+    try {
+      const data = await api("api/mini-app/admin/products");
+      state.adminProducts = data.products || [];
+      renderAdminProducts();
+      renderStockSelect();
+      await loadAdminStock();
+    } catch (error) {
+      el("admin-products").replaceChildren(empty(error.message));
+      showNotice(error.message);
+    }
+  }
+
+  async function createProduct(event) {
+    event.preventDefault();
+    const button = el("create-product");
+    button.disabled = true;
+    showNotice("");
+    try {
+      await api("api/mini-app/admin/products", { method: "POST", body: JSON.stringify({
+        sku: el("admin-sku").value,
+        name: el("admin-name").value,
+        priceUsdt: Number(el("admin-price").value),
+        description: el("admin-description").value,
+        deliveryInstruction: el("admin-instructions").value
+      }) });
+      el("product-form").reset();
+      haptic("medium");
+      await loadAdmin();
+      showNotice("Product created.");
+    } catch (error) {
+      showNotice(error.message);
+      tg?.HapticFeedback?.notificationOccurred("error");
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  async function addStock(event) {
+    event.preventDefault();
+    const button = el("add-stock");
+    button.disabled = true;
+    showNotice("");
+    try {
+      const data = await api("api/mini-app/admin/stock", { method: "POST", body: JSON.stringify({ sku: selectedAdminSKU(), payloads: el("stock-payloads").value }) });
+      el("stock-payloads").value = "";
+      haptic("medium");
+      await loadAdmin();
+      showNotice(`${data.added} stock item${data.added === 1 ? "" : "s"} added.`);
+    } catch (error) {
+      showNotice(error.message);
+      tg?.HapticFeedback?.notificationOccurred("error");
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  async function removeStock(id) {
+    if (!window.confirm("Remove this available stock item? This cannot be undone.")) return;
+    showNotice("");
+    try {
+      await api(`api/mini-app/admin/stock/${encodeURIComponent(id)}`, { method: "DELETE" });
+      haptic("medium");
+      await loadAdmin();
+      showNotice("Stock item removed.");
+    } catch (error) {
+      showNotice(error.message);
+      tg?.HapticFeedback?.notificationOccurred("error");
+    }
+  }
+
   el("refresh").addEventListener("click", loadCatalog);
   el("checkout-back").addEventListener("click", () => showView("shop"));
   el("minus").addEventListener("click", () => { el("quantity").value = String(quantity() - 1); updateTotal(); });
@@ -186,7 +344,15 @@
     haptic();
   });
   el("close-app").addEventListener("click", () => tg?.close());
-  document.querySelectorAll("[data-view]").forEach((button) => button.addEventListener("click", () => button.dataset.view === "orders" ? loadOrders() : showView("shop")));
+  el("admin-refresh").addEventListener("click", loadAdmin);
+  el("product-form").addEventListener("submit", createProduct);
+  el("stock-form").addEventListener("submit", addStock);
+  el("stock-sku").addEventListener("change", loadAdminStock);
+  document.querySelectorAll("[data-view]").forEach((button) => button.addEventListener("click", () => {
+    if (button.dataset.view === "orders") loadOrders();
+    else if (button.dataset.view === "admin") loadAdmin();
+    else showView("shop");
+  }));
 
   loadCatalog();
 })();

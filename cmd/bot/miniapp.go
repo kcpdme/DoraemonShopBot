@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -47,6 +48,19 @@ type miniAppOrder struct {
 	TxHash    string    `json:"txHash,omitempty"`
 	CreatedAt time.Time `json:"createdAt"`
 	ExpiresAt time.Time `json:"expiresAt"`
+}
+
+type miniAppAdminProduct struct {
+	miniAppProduct
+	Active              bool   `json:"active"`
+	DeliveryInstruction string `json:"deliveryInstruction"`
+}
+
+type miniAppStockItem struct {
+	ID      string    `json:"id"`
+	SKU     string    `json:"sku"`
+	State   string    `json:"state"`
+	AddedAt time.Time `json:"addedAt"`
 }
 
 func validateMiniAppURL(raw string) error {
@@ -125,6 +139,21 @@ func (a *App) miniAppUser(w http.ResponseWriter, r *http.Request) (User, bool) {
 	return user, true
 }
 
+// miniAppOwner is the authorization boundary for the Mini App admin tools.
+// The UI may hide them for non-owners, but every mutating request is checked
+// here using signed Telegram launch data.
+func (a *App) miniAppOwner(w http.ResponseWriter, r *http.Request) (User, bool) {
+	user, ok := a.miniAppUser(w, r)
+	if !ok {
+		return User{}, false
+	}
+	if !admin(a, user.ID) {
+		writeAPIError(w, http.StatusForbidden, errors.New("owner access required"))
+		return User{}, false
+	}
+	return user, true
+}
+
 func (a *App) miniAppCatalog(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeAPIError(w, http.StatusMethodNotAllowed, errors.New("method not allowed"))
@@ -160,7 +189,182 @@ func (a *App) miniAppCatalog(w http.ResponseWriter, r *http.Request) {
 	}
 	a.store.mu.Unlock()
 	sort.Slice(products, func(i, j int) bool { return products[i].Name < products[j].Name })
-	writeJSON(w, http.StatusOK, map[string]any{"products": products, "channelUrl": a.channelURL()})
+	writeJSON(w, http.StatusOK, map[string]any{"products": products, "channelUrl": a.channelURL(), "isOwner": admin(a, user.ID)})
+}
+
+func miniAppStockState(item StockItem) string {
+	if item.Sold {
+		return "sold"
+	}
+	if item.OrderID != "" {
+		return "reserved"
+	}
+	return "available"
+}
+
+func (a *App) miniAppAdminProducts(w http.ResponseWriter, r *http.Request) {
+	if _, ok := a.miniAppOwner(w, r); !ok {
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		a.store.mu.Lock()
+		products := make([]miniAppAdminProduct, 0, len(a.store.data.Products))
+		for _, product := range a.store.data.Products {
+			stock := 0
+			for _, item := range a.store.data.Stock {
+				if item.SKU == product.SKU && !item.Sold && item.OrderID == "" {
+					stock++
+				}
+			}
+			products = append(products, miniAppAdminProduct{miniAppProduct: miniAppProduct{SKU: product.SKU, Name: product.Name, Description: product.Description, PriceUSDT: product.PriceUSDT, Stock: stock}, Active: product.Active, DeliveryInstruction: product.DeliveryInstruction})
+		}
+		a.store.mu.Unlock()
+		sort.Slice(products, func(i, j int) bool { return products[i].Name < products[j].Name })
+		writeJSON(w, http.StatusOK, map[string]any{"products": products})
+	case http.MethodPost:
+		var input struct {
+			SKU                 string  `json:"sku"`
+			Name                string  `json:"name"`
+			Description         string  `json:"description"`
+			PriceUSDT           float64 `json:"priceUsdt"`
+			DeliveryInstruction string  `json:"deliveryInstruction"`
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 12288)
+		decoder := json.NewDecoder(r.Body)
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&input); err != nil {
+			writeAPIError(w, http.StatusBadRequest, errors.New("invalid product request"))
+			return
+		}
+		input.SKU = sku(input.SKU)
+		input.Name, input.Description, input.DeliveryInstruction = strings.TrimSpace(input.Name), strings.TrimSpace(input.Description), strings.TrimSpace(input.DeliveryInstruction)
+		priceCents := math.Round(input.PriceUSDT * 100)
+		if input.SKU == "" || len(input.Name) > 120 || len(input.Description) > 2000 || len(input.DeliveryInstruction) == 0 || len(input.DeliveryInstruction) > 12000 || math.IsNaN(priceCents) || math.IsInf(priceCents, 0) || priceCents < 1 || priceCents > 1e9 {
+			writeAPIError(w, http.StatusBadRequest, errors.New("provide a SKU, name, price, and delivery instructions within the allowed size"))
+			return
+		}
+		a.store.mu.Lock()
+		if _, exists := a.store.data.Products[input.SKU]; exists {
+			a.store.mu.Unlock()
+			writeAPIError(w, http.StatusConflict, errors.New("that SKU already exists"))
+			return
+		}
+		product := Product{SKU: input.SKU, Name: input.Name, Description: input.Description, PriceUSDT: priceCents / 100, DeliveryInstruction: input.DeliveryInstruction, Active: true, CreatedAt: time.Now().UTC()}
+		a.store.data.Products[product.SKU] = product
+		err := a.store.saveLocked()
+		a.store.mu.Unlock()
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, errors.New("could not save product"))
+			return
+		}
+		writeJSON(w, http.StatusCreated, miniAppAdminProduct{miniAppProduct: miniAppProduct{SKU: product.SKU, Name: product.Name, Description: product.Description, PriceUSDT: product.PriceUSDT}, Active: product.Active, DeliveryInstruction: product.DeliveryInstruction})
+	default:
+		writeAPIError(w, http.StatusMethodNotAllowed, errors.New("method not allowed"))
+	}
+}
+
+func (a *App) miniAppAdminStock(w http.ResponseWriter, r *http.Request) {
+	if _, ok := a.miniAppOwner(w, r); !ok {
+		return
+	}
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		writeAPIError(w, http.StatusMethodNotAllowed, errors.New("method not allowed"))
+		return
+	}
+	if r.Method == http.MethodGet {
+		code := sku(r.URL.Query().Get("sku"))
+		a.store.mu.Lock()
+		items := make([]miniAppStockItem, 0)
+		for _, item := range a.store.data.Stock {
+			if code == "" || item.SKU == code {
+				items = append(items, miniAppStockItem{ID: item.ID, SKU: item.SKU, State: miniAppStockState(item), AddedAt: item.AddedAt})
+			}
+		}
+		a.store.mu.Unlock()
+		sort.Slice(items, func(i, j int) bool { return items[i].AddedAt.After(items[j].AddedAt) })
+		writeJSON(w, http.StatusOK, map[string]any{"stock": items})
+		return
+	}
+	var input struct {
+		SKU      string `json:"sku"`
+		Payloads string `json:"payloads"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 65536)
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil {
+		writeAPIError(w, http.StatusBadRequest, errors.New("invalid stock request"))
+		return
+	}
+	input.SKU = sku(input.SKU)
+	payloads := []string{}
+	for _, line := range strings.Split(strings.ReplaceAll(input.Payloads, "\r\n", "\n"), "\n") {
+		if value := strings.TrimSpace(line); value != "" {
+			payloads = append(payloads, value)
+		}
+	}
+	if input.SKU == "" || len(payloads) == 0 || len(payloads) > 500 {
+		writeAPIError(w, http.StatusBadRequest, errors.New("choose a product and provide up to 500 non-empty stock lines"))
+		return
+	}
+	a.store.mu.Lock()
+	if _, exists := a.store.data.Products[input.SKU]; !exists {
+		a.store.mu.Unlock()
+		writeAPIError(w, http.StatusNotFound, errors.New("product not found"))
+		return
+	}
+	for _, payload := range payloads {
+		item := StockItem{ID: id("stock"), SKU: input.SKU, Payload: payload, AddedAt: time.Now().UTC()}
+		a.store.data.Stock[item.ID] = item
+	}
+	err := a.store.saveLocked()
+	a.store.mu.Unlock()
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, errors.New("could not save stock"))
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"added": len(payloads)})
+}
+
+func (a *App) miniAppAdminStockItem(w http.ResponseWriter, r *http.Request) {
+	if _, ok := a.miniAppOwner(w, r); !ok {
+		return
+	}
+	if r.Method != http.MethodDelete {
+		writeAPIError(w, http.StatusMethodNotAllowed, errors.New("method not allowed"))
+		return
+	}
+	const stockPath = "/api/mini-app/admin/stock/"
+	position := strings.Index(r.URL.Path, stockPath)
+	stockID := ""
+	if position >= 0 {
+		stockID = r.URL.Path[position+len(stockPath):]
+	}
+	if stockID == "" || strings.Contains(stockID, "/") {
+		writeAPIError(w, http.StatusBadRequest, errors.New("invalid stock item"))
+		return
+	}
+	a.store.mu.Lock()
+	item, exists := a.store.data.Stock[stockID]
+	if !exists {
+		a.store.mu.Unlock()
+		writeAPIError(w, http.StatusNotFound, errors.New("stock item not found"))
+		return
+	}
+	if item.Sold || item.OrderID != "" {
+		a.store.mu.Unlock()
+		writeAPIError(w, http.StatusConflict, errors.New("only available stock can be removed"))
+		return
+	}
+	delete(a.store.data.Stock, stockID)
+	err := a.store.saveLocked()
+	a.store.mu.Unlock()
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, errors.New("could not remove stock"))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (a *App) miniAppOrders(w http.ResponseWriter, r *http.Request) {
@@ -279,11 +483,17 @@ func (a *App) miniAppHandler() (http.Handler, error) {
 	})
 	mux.HandleFunc("/api/mini-app/catalog", a.miniAppCatalog)
 	mux.HandleFunc("/api/mini-app/orders", a.miniAppOrders)
+	mux.HandleFunc("/api/mini-app/admin/products", a.miniAppAdminProducts)
+	mux.HandleFunc("/api/mini-app/admin/stock", a.miniAppAdminStock)
+	mux.HandleFunc("/api/mini-app/admin/stock/", a.miniAppAdminStockItem)
 	if publicURL, parseErr := url.Parse(a.cfg.MiniAppURL); parseErr == nil {
 		prefix := strings.TrimSuffix(publicURL.Path, "/")
 		if prefix != "" {
 			mux.HandleFunc(prefix+"/api/mini-app/catalog", a.miniAppCatalog)
 			mux.HandleFunc(prefix+"/api/mini-app/orders", a.miniAppOrders)
+			mux.HandleFunc(prefix+"/api/mini-app/admin/products", a.miniAppAdminProducts)
+			mux.HandleFunc(prefix+"/api/mini-app/admin/stock", a.miniAppAdminStock)
+			mux.HandleFunc(prefix+"/api/mini-app/admin/stock/", a.miniAppAdminStockItem)
 			mux.Handle(prefix+"/", http.StripPrefix(prefix, miniAppStaticHandler(static)))
 		}
 	}
