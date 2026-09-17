@@ -134,7 +134,7 @@
   async function placeOrder() {
     const button = el("place-order");
     button.disabled = true;
-    button.textContent = "Reserving…";
+    button.textContent = "Buying…";
     showNotice("");
     try {
       const network = document.querySelector('input[name="network"]:checked').value;
@@ -146,7 +146,7 @@
       tg?.HapticFeedback?.notificationOccurred("error");
     } finally {
       button.disabled = false;
-      button.textContent = "Reserve stock";
+      button.textContent = "Buy";
     }
   }
 
