@@ -268,10 +268,6 @@ func (a *App) miniAppAdminProductItem(w http.ResponseWriter, r *http.Request) {
 	if _, ok := a.miniAppOwner(w, r); !ok {
 		return
 	}
-	if r.Method != http.MethodPatch {
-		writeAPIError(w, http.StatusMethodNotAllowed, errors.New("method not allowed"))
-		return
-	}
 	const productPath = "/api/mini-app/admin/products/"
 	position := strings.Index(r.URL.Path, productPath)
 	productSKU := ""
@@ -280,6 +276,14 @@ func (a *App) miniAppAdminProductItem(w http.ResponseWriter, r *http.Request) {
 	}
 	if productSKU == "" {
 		writeAPIError(w, http.StatusBadRequest, errors.New("invalid product"))
+		return
+	}
+	if r.Method == http.MethodDelete {
+		a.deleteMiniAppProduct(w, productSKU)
+		return
+	}
+	if r.Method != http.MethodPatch {
+		writeAPIError(w, http.StatusMethodNotAllowed, errors.New("method not allowed"))
 		return
 	}
 	var input struct {
@@ -319,6 +323,40 @@ func (a *App) miniAppAdminProductItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, miniAppAdminProduct{miniAppProduct: miniAppProduct{SKU: product.SKU, Name: product.Name, Description: product.Description, PriceUSDT: product.PriceUSDT, Stock: stock}, Active: product.Active, DeliveryInstruction: product.DeliveryInstruction})
+}
+
+func (a *App) deleteMiniAppProduct(w http.ResponseWriter, productSKU string) {
+	// A product's delivery payload may still be needed for an unfinished order.
+	// Refuse the destructive request until all buyers using it are settled.
+	a.opMu.Lock()
+	defer a.opMu.Unlock()
+	a.store.mu.Lock()
+	defer a.store.mu.Unlock()
+	if _, exists := a.store.data.Products[productSKU]; !exists {
+		writeAPIError(w, http.StatusNotFound, errors.New("product not found"))
+		return
+	}
+	for _, order := range a.store.data.Orders {
+		if order.SKU != productSKU {
+			continue
+		}
+		switch order.Status {
+		case "awaiting_payment", "proof_invalid", "payment_submitted", "delivery_pending":
+			writeAPIError(w, http.StatusConflict, errors.New("this product has an active order and cannot be deleted yet"))
+			return
+		}
+	}
+	delete(a.store.data.Products, productSKU)
+	for stockID, item := range a.store.data.Stock {
+		if item.SKU == productSKU {
+			delete(a.store.data.Stock, stockID)
+		}
+	}
+	if err := a.store.saveLocked(); err != nil {
+		writeAPIError(w, http.StatusInternalServerError, errors.New("could not delete product"))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (a *App) miniAppAdminStock(w http.ResponseWriter, r *http.Request) {

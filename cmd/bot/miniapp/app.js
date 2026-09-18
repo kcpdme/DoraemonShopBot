@@ -197,7 +197,12 @@
       const edit = node("button", "edit-price", "Edit price");
       edit.type = "button";
       edit.addEventListener("click", () => updateProductPrice(product));
-      card.append(copy, edit);
+      const remove = node("button", "delete-product", "Delete");
+      remove.type = "button";
+      remove.addEventListener("click", () => deleteProduct(product));
+      const actions = node("div", "admin-actions");
+      actions.append(edit, remove);
+      card.append(copy, actions);
       root.append(card);
     });
   }
@@ -315,6 +320,21 @@
       haptic("medium");
       await loadAdmin();
       showNotice("Product price updated.");
+    } catch (error) {
+      showNotice(error.message);
+      tg?.HapticFeedback?.notificationOccurred("error");
+    }
+  }
+
+  async function deleteProduct(product) {
+    const confirmed = window.confirm(`Delete ${product.name}? This permanently removes the product and all of its stock items.`);
+    if (!confirmed) return;
+    showNotice("");
+    try {
+      await api(`api/mini-app/admin/products/${encodeURIComponent(product.sku)}`, { method: "DELETE" });
+      haptic("medium");
+      await loadAdmin();
+      showNotice("Product and its stock were deleted.");
     } catch (error) {
       showNotice(error.message);
       tg?.HapticFeedback?.notificationOccurred("error");

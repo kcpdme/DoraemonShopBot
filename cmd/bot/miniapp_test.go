@@ -155,6 +155,19 @@ func TestMiniAppAdminRequiresOwnerAndManagesPrivateStock(t *testing.T) {
 	if remove.Code != http.StatusNoContent || len(store.data.Stock) != 1 {
 		t.Fatalf("stock removal status=%d stock=%d", remove.Code, len(store.data.Stock))
 	}
+
+	store.data.Orders["active-order"] = Order{ID: "active-order", SKU: "KEY-1", Status: "payment_submitted"}
+	blocked := httptest.NewRecorder()
+	app.miniAppAdminProductItem(blocked, miniAppOwnerRequest(t, http.MethodDelete, "/api/mini-app/admin/products/KEY-1", "test-token", 7, ""))
+	if blocked.Code != http.StatusConflict || store.data.Products["KEY-1"].SKU != "KEY-1" {
+		t.Fatalf("active product deletion status=%d body=%s", blocked.Code, blocked.Body.String())
+	}
+	delete(store.data.Orders, "active-order")
+	deleteProduct := httptest.NewRecorder()
+	app.miniAppAdminProductItem(deleteProduct, miniAppOwnerRequest(t, http.MethodDelete, "/api/mini-app/admin/products/KEY-1", "test-token", 7, ""))
+	if deleteProduct.Code != http.StatusNoContent || len(store.data.Products) != 0 || len(store.data.Stock) != 0 {
+		t.Fatalf("product deletion status=%d products=%d stock=%d", deleteProduct.Code, len(store.data.Products), len(store.data.Stock))
+	}
 }
 
 func TestMiniAppServesIndexForPublicURLPath(t *testing.T) {

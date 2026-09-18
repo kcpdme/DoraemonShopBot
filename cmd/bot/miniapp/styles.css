@@ -101,6 +101,8 @@ legend { margin-bottom: 9px; }
 .state.sold { color: var(--tg-theme-hint-color, #68768b); background: color-mix(in srgb, var(--tg-theme-hint-color, #68768b) 14%, transparent); }
 .remove-stock { flex: 0 0 auto; padding: 7px 9px; color: #bd3e4b; background: transparent; border: 1px solid color-mix(in srgb, #bd3e4b 45%, transparent); border-radius: 8px; font-size: 12px; font-weight: 750; }
 .edit-price { flex: 0 0 auto; padding: 7px 9px; color: var(--tg-theme-button-color, #2376dc); background: transparent; border: 1px solid color-mix(in srgb, var(--tg-theme-button-color, #2376dc) 45%, transparent); border-radius: 8px; font-size: 12px; font-weight: 750; }
+.admin-actions { display: flex; flex: 0 0 auto; gap: 7px; }
+.delete-product { padding: 7px 9px; color: #bd3e4b; background: transparent; border: 1px solid color-mix(in srgb, #bd3e4b 45%, transparent); border-radius: 8px; font-size: 12px; font-weight: 750; }
 
 .tabs { position: fixed; z-index: 3; bottom: 0; left: 50%; display: grid; width: min(100%, 760px); grid-template-columns: repeat(2, 1fr); padding: 8px 16px calc(8px + env(safe-area-inset-bottom)); transform: translateX(-50%); background: color-mix(in srgb, var(--tg-theme-bg-color, #fff) 94%, transparent); border-top: 1px solid color-mix(in srgb, var(--tg-theme-hint-color, #738097) 20%, transparent); backdrop-filter: blur(14px); }
 .tabs.admin-enabled { grid-template-columns: repeat(3, 1fr); }
