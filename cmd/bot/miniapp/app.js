@@ -2,7 +2,7 @@
   "use strict";
 
   const tg = window.Telegram?.WebApp;
-  const state = { products: [], selected: null, order: null, isOwner: false, adminProducts: [], stock: [] };
+  const state = { products: [], selected: null, order: null, isOwner: false, adminProducts: [], stock: [], adminSection: "overview" };
   const el = (id) => document.getElementById(id);
   const views = ["shop", "orders", "checkout", "success", "admin"];
 
@@ -181,19 +181,88 @@
     return el("stock-sku").value || state.adminProducts[0]?.sku || "";
   }
 
+  function setAdminSection(name, loadStock = true) {
+    state.adminSection = name;
+    document.querySelectorAll("[data-admin-panel]").forEach((panel) => panel.classList.toggle("hidden", panel.dataset.adminPanel !== name));
+    document.querySelectorAll("[data-admin-section]").forEach((button) => {
+      const active = button.dataset.adminSection === name;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-current", active ? "page" : "false");
+    });
+    if (name === "stock" && loadStock) loadAdminStock();
+  }
+
+  function stockPriority(product) {
+    if (product.stock === 0) return "Out of stock";
+    return `${product.stock} left`;
+  }
+
+  function openStockFor(sku, revealForm = false) {
+    if (!state.adminProducts.length) {
+      setAdminSection("products", false);
+      showNotice("Create a product before adding stock.");
+      return;
+    }
+    setAdminSection("stock", false);
+    if (sku && state.adminProducts.some((product) => product.sku === sku)) el("stock-sku").value = sku;
+    el("stock-form").classList.toggle("hidden", !revealForm);
+    loadAdminStock();
+    if (revealForm) el("stock-payloads").focus();
+  }
+
+  function renderAdminOverview() {
+    const products = state.adminProducts;
+    const available = products.reduce((total, product) => total + product.stock, 0);
+    const lowStock = products.filter((product) => product.active !== false && product.stock <= 2).sort((a, b) => a.stock - b.stock || a.name.localeCompare(b.name));
+    el("admin-product-metric").textContent = String(products.length);
+    el("admin-stock-metric").textContent = String(available);
+    el("admin-low-stock-metric").textContent = String(lowStock.length);
+
+    const root = el("admin-attention");
+    root.replaceChildren();
+    if (!products.length) {
+      root.append(empty("No products yet. Create the first product to start selling."));
+      return;
+    }
+    if (!lowStock.length) {
+      const clear = node("div", "attention-clear");
+      clear.append(node("span", "attention-check", "✓"), node("div", "", "Every active product has enough stock."));
+      root.append(clear);
+      return;
+    }
+    lowStock.forEach((product) => {
+      const row = node("button", `attention-item${product.stock === 0 ? " urgent" : ""}`);
+      row.type = "button";
+      const copy = node("span", "attention-copy");
+      copy.append(node("strong", "", product.name), node("small", "", product.sku));
+      row.append(copy, node("span", "attention-state", stockPriority(product)));
+      row.addEventListener("click", () => openStockFor(product.sku, true));
+      root.append(row);
+    });
+  }
+
   function renderAdminProducts() {
     const root = el("admin-products");
     root.replaceChildren();
-    el("admin-product-count").textContent = `${state.adminProducts.length} products`;
+    const query = el("admin-product-search").value.trim().toLowerCase();
+    const products = state.adminProducts.filter((product) => !query || product.name.toLowerCase().includes(query) || product.sku.toLowerCase().includes(query));
+    el("admin-product-count").textContent = query ? `${products.length} results` : `${products.length} products`;
     if (!state.adminProducts.length) {
-      root.append(empty("Create your first product above."));
+      root.append(empty("No products yet. Use New product to create one."));
       return;
     }
-    state.adminProducts.forEach((product) => {
+    if (!products.length) {
+      root.append(empty("No products match this search."));
+      return;
+    }
+    products.forEach((product) => {
       const card = node("article", "admin-product");
-      const copy = node("div");
-      copy.append(node("strong", "", product.name));
-      copy.append(node("small", "", `${product.sku} · ${product.priceUsdt.toFixed(2)} USDT · ${product.stock} available · ${product.active ? "active" : "hidden"}`));
+      const copy = node("div", "product-main");
+      const heading = node("div", "product-admin-heading");
+      heading.append(node("strong", "", product.name), node("span", `visibility-status ${product.active ? "active" : "hidden-product"}`, product.active ? "Active" : "Hidden"));
+      const facts = node("div", "product-facts");
+      facts.append(node("span", "", product.sku), node("span", "", `${product.priceUsdt.toFixed(2)} USDT`), node("span", product.stock <= 2 ? "low" : "", `${product.stock} available`));
+      copy.append(heading, facts);
       const edit = node("button", "edit-price", "Edit price");
       edit.type = "button";
       edit.addEventListener("click", () => updateProductPrice(product));
@@ -222,7 +291,8 @@
   function renderAdminStock() {
     const root = el("admin-stock");
     root.replaceChildren();
-    el("admin-stock-count").textContent = `${state.stock.length} items`;
+    const available = state.stock.filter((item) => item.state === "available").length;
+    el("admin-stock-count").textContent = `${available} available · ${state.stock.length} total`;
     if (!state.stock.length) {
       root.append(empty("No stock items for this product."));
       return;
@@ -269,14 +339,18 @@
     showView("admin");
     showNotice("");
     el("admin-products").replaceChildren(empty("Loading products…"));
+    el("admin-attention").replaceChildren(empty("Loading store summary…"));
     try {
       const data = await api("api/mini-app/admin/products");
       state.adminProducts = data.products || [];
+      renderAdminOverview();
       renderAdminProducts();
       renderStockSelect();
-      await loadAdminStock();
+      setAdminSection(state.adminSection, false);
+      if (state.adminSection === "stock") await loadAdminStock();
     } catch (error) {
       el("admin-products").replaceChildren(empty(error.message));
+      el("admin-attention").replaceChildren(empty(error.message));
       showNotice(error.message);
     }
   }
@@ -295,6 +369,8 @@
         deliveryInstruction: el("admin-instructions").value
       }) });
       el("product-form").reset();
+      el("product-form").classList.add("hidden");
+      state.adminSection = "products";
       haptic("medium");
       await loadAdmin();
       showNotice("Product created.");
@@ -317,6 +393,7 @@
     showNotice("");
     try {
       await api(`api/mini-app/admin/products/${encodeURIComponent(product.sku)}`, { method: "PATCH", body: JSON.stringify({ priceUsdt }) });
+      state.adminSection = "products";
       haptic("medium");
       await loadAdmin();
       showNotice("Product price updated.");
@@ -332,6 +409,7 @@
     showNotice("");
     try {
       await api(`api/mini-app/admin/products/${encodeURIComponent(product.sku)}`, { method: "DELETE" });
+      state.adminSection = "products";
       haptic("medium");
       await loadAdmin();
       showNotice("Product and its stock were deleted.");
@@ -349,6 +427,8 @@
     try {
       const data = await api("api/mini-app/admin/stock", { method: "POST", body: JSON.stringify({ sku: selectedAdminSKU(), payloads: el("stock-payloads").value }) });
       el("stock-payloads").value = "";
+      el("stock-form").classList.add("hidden");
+      state.adminSection = "stock";
       haptic("medium");
       await loadAdmin();
       showNotice(`${data.added} stock item${data.added === 1 ? "" : "s"} added.`);
@@ -365,6 +445,7 @@
     showNotice("");
     try {
       await api(`api/mini-app/admin/stock/${encodeURIComponent(id)}`, { method: "DELETE" });
+      state.adminSection = "stock";
       haptic("medium");
       await loadAdmin();
       showNotice("Stock item removed.");
@@ -388,6 +469,21 @@
   });
   el("close-app").addEventListener("click", () => tg?.close());
   el("admin-refresh").addEventListener("click", loadAdmin);
+  document.querySelectorAll("[data-admin-section]").forEach((button) => button.addEventListener("click", () => setAdminSection(button.dataset.adminSection)));
+  el("overview-new-product").addEventListener("click", () => {
+    setAdminSection("products", false);
+    el("product-form").classList.remove("hidden");
+    el("admin-sku").focus();
+  });
+  el("open-product-form").addEventListener("click", () => {
+    el("product-form").classList.remove("hidden");
+    el("admin-sku").focus();
+  });
+  el("cancel-product-form").addEventListener("click", () => el("product-form").classList.add("hidden"));
+  el("overview-add-stock").addEventListener("click", () => openStockFor("", true));
+  el("open-stock-form").addEventListener("click", () => openStockFor(selectedAdminSKU(), true));
+  el("cancel-stock-form").addEventListener("click", () => el("stock-form").classList.add("hidden"));
+  el("admin-product-search").addEventListener("input", renderAdminProducts);
   el("product-form").addEventListener("submit", createProduct);
   el("stock-form").addEventListener("submit", addStock);
   el("stock-sku").addEventListener("change", loadAdminStock);

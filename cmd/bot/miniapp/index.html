@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="light dark">
   <title>Doraemon Shop</title>
-  <link rel="stylesheet" href="styles.css?v=20260918-delete">
+  <link rel="stylesheet" href="styles.css?v=20260918-admin-redesign">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <script src="app.js?v=20260918-delete" defer></script>
+  <script src="app.js?v=20260918-admin-redesign" defer></script>
 </head>
 <body>
   <header class="topbar">
@@ -74,39 +74,75 @@
       <div class="admin-intro">
         <div>
           <p class="eyebrow">Owner only</p>
-          <h2>Store admin</h2>
-          <p class="muted">Create products and manage delivery stock. Stock values never appear in this list.</p>
+          <h2>Admin centre</h2>
+          <p class="muted">Products and private delivery inventory in one place.</p>
         </div>
-        <button id="admin-refresh" class="text-button" type="button">Refresh</button>
+        <button id="admin-refresh" class="icon-button" type="button" aria-label="Refresh admin data">Refresh</button>
       </div>
 
-      <div class="admin-grid">
-        <form id="product-form" class="admin-panel">
-          <h3>Create product</h3>
-          <label>SKU <input id="admin-sku" maxlength="80" required placeholder="GEMINI-18M"></label>
-          <label>Name <input id="admin-name" maxlength="120" required placeholder="Gemini AI Pro 18 Months"></label>
-          <label>Price in USDT <input id="admin-price" type="number" inputmode="decimal" min="0.01" step="0.01" required placeholder="12.50"></label>
-          <label>Description <textarea id="admin-description" maxlength="2000" rows="3" placeholder="Shown to buyers before payment"></textarea></label>
-          <label>Delivery instructions <textarea id="admin-instructions" maxlength="12000" rows="4" required placeholder="Shown privately after payment"></textarea></label>
+      <nav class="admin-segments" aria-label="Admin sections">
+        <button class="active" data-admin-section="overview" type="button">Overview</button>
+        <button data-admin-section="products" type="button">Products</button>
+        <button data-admin-section="stock" type="button">Stock</button>
+      </nav>
+
+      <section id="admin-overview" data-admin-panel="overview">
+        <div class="admin-metrics" aria-label="Store summary">
+          <article><span>Products</span><strong id="admin-product-metric">0</strong></article>
+          <article><span>Available stock</span><strong id="admin-stock-metric">0</strong></article>
+          <article><span>Needs stock</span><strong id="admin-low-stock-metric">0</strong></article>
+        </div>
+
+        <div class="quick-actions">
+          <button id="overview-new-product" class="quick-action" type="button"><strong>New product</strong><span>Add an item to the shop</span></button>
+          <button id="overview-add-stock" class="quick-action" type="button"><strong>Add stock</strong><span>Load private delivery items</span></button>
+        </div>
+
+        <section class="attention-section">
+          <div class="section-heading"><div><p class="section-kicker">Inventory</p><h3>Needs attention</h3></div></div>
+          <div id="admin-attention" class="attention-list" aria-live="polite"></div>
+        </section>
+      </section>
+
+      <section id="admin-products-section" data-admin-panel="products" class="hidden">
+        <div class="section-toolbar">
+          <div><p class="section-kicker">Catalog</p><h3>Products</h3></div>
+          <button id="open-product-form" class="compact-primary" type="button">New product</button>
+        </div>
+
+        <form id="product-form" class="task-panel hidden">
+          <div class="task-panel-heading"><div><p class="section-kicker">Catalog</p><h3>Create product</h3></div><button id="cancel-product-form" class="text-button" type="button">Cancel</button></div>
+          <div class="form-grid">
+            <label>SKU <input id="admin-sku" maxlength="80" required placeholder="GEMINI-18M"></label>
+            <label>Name <input id="admin-name" maxlength="120" required placeholder="Gemini AI Pro 18 Months"></label>
+            <label>Price in USDT <input id="admin-price" type="number" inputmode="decimal" min="0.01" step="0.01" required placeholder="12.50"></label>
+            <label class="full-width">Description <textarea id="admin-description" maxlength="2000" rows="3" placeholder="Shown to buyers before payment"></textarea></label>
+            <label class="full-width">Delivery instructions <textarea id="admin-instructions" maxlength="12000" rows="4" required placeholder="Shown privately after payment"></textarea></label>
+          </div>
           <button id="create-product" class="primary" type="submit">Create product</button>
         </form>
 
-        <form id="stock-form" class="admin-panel">
-          <h3>Add stock</h3>
-          <label>Product <select id="stock-sku" required></select></label>
-          <label>Delivery stock <textarea id="stock-payloads" maxlength="60000" rows="9" required placeholder="One private delivery item per line"></textarea></label>
-          <p class="fine-print">Each non-empty line is one item. Values are sent only to the buyer after payment.</p>
-          <button id="add-stock" class="primary" type="submit">Add stock</button>
-        </form>
-      </div>
-
-      <section class="admin-section">
-        <div class="section-heading"><h3>Products</h3><span id="admin-product-count" class="count"></span></div>
+        <label class="search-field"><span>Search products</span><input id="admin-product-search" type="search" placeholder="Name or SKU" autocomplete="off"></label>
+        <div class="list-heading"><span id="admin-product-count" class="count"></span><span>Price · available stock · status</span></div>
         <div id="admin-products" class="admin-products" aria-live="polite"></div>
       </section>
 
-      <section class="admin-section">
-        <div class="section-heading"><h3>Stock</h3><span id="admin-stock-count" class="count"></span></div>
+      <section id="admin-stock-section" data-admin-panel="stock" class="hidden">
+        <div class="section-toolbar">
+          <div><p class="section-kicker">Inventory</p><h3>Stock</h3></div>
+          <button id="open-stock-form" class="compact-primary" type="button">Add stock</button>
+        </div>
+
+        <label class="product-filter">Product <select id="stock-sku" required></select></label>
+
+        <form id="stock-form" class="task-panel hidden">
+          <div class="task-panel-heading"><div><p class="section-kicker">Inventory</p><h3>Add private stock</h3></div><button id="cancel-stock-form" class="text-button" type="button">Cancel</button></div>
+          <label>Delivery stock <textarea id="stock-payloads" maxlength="60000" rows="8" required placeholder="One private delivery item per line"></textarea></label>
+          <p class="fine-print">Each non-empty line becomes one delivery item. Values remain hidden and are sent only after payment.</p>
+          <button id="add-stock" class="primary" type="submit">Add stock</button>
+        </form>
+
+        <div class="list-heading"><span id="admin-stock-count" class="count"></span><span>Only available items can be removed</span></div>
         <div id="admin-stock" class="admin-stock" aria-live="polite"></div>
       </section>
     </section>
