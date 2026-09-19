@@ -229,6 +229,7 @@ type Button struct {
 	Data   string      `json:"callback_data,omitempty"`
 	URL    string      `json:"url,omitempty"`
 	WebApp *WebAppInfo `json:"web_app,omitempty"`
+	Style  string      `json:"style,omitempty"`
 }
 type WebAppInfo struct {
 	URL string `json:"url"`
@@ -375,22 +376,22 @@ func (a *App) productsText() (string, *Markup) {
 				n++
 			}
 		}
-		indicator, availability := catalogStockIndicator(n)
-		rows = append(rows, []Button{{Text: fmt.Sprintf("%s %s · $%.2f · %s", indicator, p.Name, p.PriceUSDT, availability), Data: "product:" + p.SKU}})
+		style, availability := catalogStockStyle(n)
+		rows = append(rows, []Button{{Text: fmt.Sprintf("🛒 %s · $%.2f · %s", p.Name, p.PriceUSDT, availability), Data: "product:" + p.SKU, Style: style}})
 	}
 	return text, &Markup{InlineKeyboard: rows}
 }
 
-// Telegram inline buttons do not support arbitrary background colors. Use the
-// matching colored status dot so stock availability is still clear at a glance.
-func catalogStockIndicator(stock int) (string, string) {
+// Telegram's native inline-button styles color the entire product strip. They
+// are theme-aware in Telegram clients, unlike manually colored emoji markers.
+func catalogStockStyle(stock int) (string, string) {
 	switch {
 	case stock <= 0:
-		return "🔴", "Sold out"
+		return "danger", "Sold out"
 	case stock > 5:
-		return "🟢", fmt.Sprintf("%d available", stock)
+		return "success", fmt.Sprintf("%d available", stock)
 	default:
-		return "🔵", fmt.Sprintf("%d available", stock)
+		return "primary", fmt.Sprintf("%d available", stock)
 	}
 }
 func (a *App) broadcast(ctx context.Context, msg string, includeChannel bool) {

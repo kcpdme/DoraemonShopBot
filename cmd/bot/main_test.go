@@ -2,7 +2,6 @@ package main
 
 import (
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 )
@@ -59,16 +58,20 @@ func TestCatalogStockIndicators(t *testing.T) {
 	if keyboard == nil {
 		t.Fatal("catalog has no buttons")
 	}
-	buttons := []string{}
+	buttons := map[string]Button{}
 	for _, row := range keyboard.InlineKeyboard {
 		for _, button := range row {
-			buttons = append(buttons, button.Text)
+			buttons[button.Data] = button
 		}
 	}
-	joined := strings.Join(buttons, "\n")
-	for _, want := range []string{"🟢 Green stock · $1.00 · 6 available", "🔵 Blue stock · $2.00 · 5 available", "🔴 Red stock · $3.00 · Sold out"} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("catalog missing %q in %s", want, joined)
+	for data, want := range map[string]struct{ text, style string }{
+		"product:GREEN": {"🛒 Green stock · $1.00 · 6 available", "success"},
+		"product:BLUE":  {"🛒 Blue stock · $2.00 · 5 available", "primary"},
+		"product:RED":   {"🛒 Red stock · $3.00 · Sold out", "danger"},
+	} {
+		button, ok := buttons[data]
+		if !ok || button.Text != want.text || button.Style != want.style {
+			t.Errorf("catalog button %s = %#v, want text=%q style=%q", data, button, want.text, want.style)
 		}
 	}
 }
