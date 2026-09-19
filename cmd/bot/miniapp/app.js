@@ -2,7 +2,7 @@
   "use strict";
 
   const tg = window.Telegram?.WebApp;
-  const state = { products: [], selected: null, order: null, isOwner: false, adminProducts: [], stock: [], adminOrders: [], adminSection: "overview" };
+  const state = { products: [], selected: null, order: null, isOwner: false, adminProducts: [], stock: [], adminOrders: [], adminSection: "overview", catalogQuery: "", catalogFilter: "all" };
   const el = (id) => document.getElementById(id);
   const views = ["shop", "orders", "checkout", "success", "admin"];
 
@@ -49,27 +49,69 @@
     return node("div", "empty", message);
   }
 
+  function productInitials(product) {
+    const words = String(product.name || product.sku || "").trim().split(/\s+/).filter(Boolean);
+    return (words.length > 1 ? `${words[0][0]}${words[1][0]}` : words[0]?.slice(0, 2) || "DG").toUpperCase();
+  }
+
+  function productTone(product) {
+    const value = Array.from(String(product.sku || product.name || "")).reduce((total, character) => total + character.charCodeAt(0), 0);
+    return value % 4;
+  }
+
+  function visibleProducts() {
+    const query = state.catalogQuery.trim().toLowerCase();
+    return state.products.filter((product) => {
+      if (state.catalogFilter === "available" && product.stock < 1) return false;
+      if (state.catalogFilter === "low" && (product.stock < 1 || product.stock > 5)) return false;
+      return !query || [product.name, product.sku, product.description].join(" ").toLowerCase().includes(query);
+    });
+  }
+
   function renderCatalog() {
     const root = el("catalog");
     root.replaceChildren();
+    const available = state.products.filter((product) => product.stock > 0).length;
+    const lowStock = state.products.filter((product) => product.stock > 0 && product.stock <= 5).length;
+    el("filter-all-count").textContent = String(state.products.length);
+    el("filter-available-count").textContent = String(available);
+    el("filter-low-count").textContent = String(lowStock);
     if (!state.products.length) {
+      el("catalog-count").textContent = "0 products";
       root.append(empty("No products are available right now. Check again after the next restock."));
       return;
     }
-    state.products.forEach((product) => {
-      const card = node("button", "product");
-      card.type = "button";
-      card.disabled = product.stock < 1;
-      card.append(node("span", "product-code", product.sku));
-      card.append(node("h2", "", product.name));
-      card.append(node("p", "product-description", product.description));
+    const products = visibleProducts();
+    el("catalog-count").textContent = `${products.length} ${products.length === 1 ? "product" : "products"}`;
+    if (!products.length) {
+      root.append(empty("No products match those filters. Try another search."));
+      return;
+    }
+    products.forEach((product) => {
+      const card = node("article", `product${product.stock ? "" : " unavailable"}`);
+      const visual = node("div", `product-visual tone-${productTone(product)}`, productInitials(product));
+      visual.setAttribute("aria-hidden", "true");
+
+      const content = node("div", "product-content");
+      const heading = node("div", "product-heading");
+      const identity = node("div", "product-identity");
+      identity.append(node("span", "product-code", product.sku), node("h2", "", product.name));
+      const stockClass = product.stock > 5 ? "healthy" : product.stock > 0 ? "low" : "sold-out";
+      const stockLabel = product.stock > 0 ? `${product.stock} left` : "Sold out";
+      heading.append(identity, node("span", `stock ${stockClass}`, stockLabel));
+      content.append(heading, node("p", "product-description", product.description));
+
       const footer = node("div", "product-footer");
       const price = node("span", "price", `${product.priceUsdt.toFixed(2)} USDT`);
       price.append(node("small", "", "per item"));
-      const stock = node("span", `stock${product.stock ? "" : " sold-out"}`, product.stock ? `${product.stock} available` : "Sold out");
-      footer.append(price, stock);
-      card.append(footer);
-      if (product.stock) card.addEventListener("click", () => openCheckout(product));
+      const buy = node("button", `product-buy${product.stock ? "" : " sold-out"}`, product.stock ? "Buy" : "Sold out");
+      buy.type = "button";
+      buy.disabled = product.stock < 1;
+      buy.setAttribute("aria-label", product.stock ? `Buy ${product.name}` : `${product.name} is sold out`);
+      if (product.stock) buy.addEventListener("click", () => openCheckout(product));
+      footer.append(price, buy);
+      content.append(footer);
+      card.append(visual, content);
       root.append(card);
     });
   }
@@ -546,6 +588,16 @@
   }
 
   el("refresh").addEventListener("click", loadCatalog);
+  el("catalog-search").addEventListener("input", (event) => {
+    state.catalogQuery = event.target.value;
+    renderCatalog();
+  });
+  document.querySelectorAll("[data-catalog-filter]").forEach((button) => button.addEventListener("click", () => {
+    state.catalogFilter = button.dataset.catalogFilter;
+    document.querySelectorAll("[data-catalog-filter]").forEach((option) => option.classList.toggle("active", option === button));
+    haptic();
+    renderCatalog();
+  }));
   el("checkout-back").addEventListener("click", () => showView("shop"));
   el("minus").addEventListener("click", () => { el("quantity").value = String(quantity() - 1); updateTotal(); });
   el("plus").addEventListener("click", () => { el("quantity").value = String(quantity() + 1); updateTotal(); });

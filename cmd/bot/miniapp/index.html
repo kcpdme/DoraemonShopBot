@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="light dark">
   <title>Doraemon Shop</title>
-  <link rel="stylesheet" href="styles.css?v=20260919-admin-orders">
+  <link rel="stylesheet" href="styles.css?v=20260919-catalog-redesign">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <script src="app.js?v=20260919-admin-orders" defer></script>
+  <script src="app.js?v=20260919-catalog-redesign" defer></script>
 </head>
 <body>
   <header class="topbar">
@@ -21,9 +21,34 @@
   <main>
     <section id="notice" class="notice hidden" role="status"></section>
     <section id="shop-view">
-      <div class="intro">
-        <p>Instant delivery after your USDT payment is confirmed.</p>
-        <button id="refresh" class="text-button" type="button">Refresh stock</button>
+      <section class="catalog-hero" aria-labelledby="catalog-title">
+        <div>
+          <p class="eyebrow">Instant digital delivery</p>
+          <h2 id="catalog-title">Find your next upgrade</h2>
+          <p>Live stock, simple USDT checkout, and private delivery.</p>
+        </div>
+        <button id="refresh" class="refresh-button" type="button" aria-label="Refresh product stock"><span aria-hidden="true">↻</span> Refresh</button>
+      </section>
+
+      <section class="catalog-tools" aria-label="Catalogue controls">
+        <label class="catalog-search" for="catalog-search">
+          <span class="search-icon" aria-hidden="true">⌕</span>
+          <span class="sr-only">Search products</span>
+          <input id="catalog-search" type="search" placeholder="Search products" autocomplete="off">
+        </label>
+        <div class="catalog-filters" role="group" aria-label="Filter products">
+          <button class="active" data-catalog-filter="all" type="button">All <span id="filter-all-count">0</span></button>
+          <button data-catalog-filter="available" type="button">Available <span id="filter-available-count">0</span></button>
+          <button data-catalog-filter="low" type="button">Low stock <span id="filter-low-count">0</span></button>
+        </div>
+      </section>
+
+      <div class="catalog-heading">
+        <div>
+          <p class="section-kicker">Catalogue</p>
+          <h3>Digital products</h3>
+        </div>
+        <span id="catalog-count" class="catalog-count" aria-live="polite"></span>
       </div>
       <div id="catalog" class="catalog" aria-live="polite"></div>
     </section>
