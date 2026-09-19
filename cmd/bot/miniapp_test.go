@@ -170,6 +170,37 @@ func TestMiniAppAdminRequiresOwnerAndManagesPrivateStock(t *testing.T) {
 	}
 }
 
+func TestMiniAppAdminOrdersAreOwnerOnlyAndExcludeDeliverySecrets(t *testing.T) {
+	store, err := openStore(filepath.Join(t.TempDir(), "store.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	created := time.Now().UTC().Add(-time.Hour)
+	paid := created.Add(4 * time.Minute)
+	store.data.Orders["ord-1"] = Order{
+		ID: "ord-1", SKU: "GEMINI-18M", ProductName: "Gemini access", Quantity: 2, Amount: 18.5,
+		BuyerID: 42, BuyerName: "@buyer", Network: "polygon", TxHash: "0xabc", Status: "delivered",
+		PaymentIssue: "", DeliveryInstruction: "private redemption link", CreatedAt: created, PaidAt: paid,
+	}
+	app := &App{cfg: Config{Token: "test-token", OwnerID: 7}, store: store}
+
+	denied := httptest.NewRecorder()
+	app.miniAppAdminOrders(denied, miniAppOwnerRequest(t, http.MethodGet, "/api/mini-app/admin/orders", "test-token", 8, ""))
+	if denied.Code != http.StatusForbidden {
+		t.Fatalf("non-owner admin orders status=%d body=%s", denied.Code, denied.Body.String())
+	}
+
+	response := httptest.NewRecorder()
+	app.miniAppAdminOrders(response, miniAppOwnerRequest(t, http.MethodGet, "/api/mini-app/admin/orders", "test-token", 7, ""))
+	body := response.Body.String()
+	if response.Code != http.StatusOK || !strings.Contains(body, "@buyer") || !strings.Contains(body, "Wallet balance") && !strings.Contains(body, "USDT · Polygon") || !strings.Contains(body, "0xabc") {
+		t.Fatalf("owner admin orders status=%d body=%s", response.Code, body)
+	}
+	if strings.Contains(body, "private redemption link") {
+		t.Fatalf("admin order API leaked delivery instructions: %s", body)
+	}
+}
+
 func TestMiniAppServesIndexForPublicURLPath(t *testing.T) {
 	app := &App{cfg: Config{MiniAppURL: "https://shop.example.com/shop/"}}
 	handler, err := app.miniAppHandler()

@@ -63,6 +63,26 @@ type miniAppStockItem struct {
 	AddedAt time.Time `json:"addedAt"`
 }
 
+// miniAppAdminOrder intentionally includes the buyer and payment audit fields
+// that only the owner needs. It does not expose private delivery instructions
+// or the underlying stock payloads.
+type miniAppAdminOrder struct {
+	ID            string     `json:"id"`
+	SKU           string     `json:"sku"`
+	Name          string     `json:"name"`
+	Quantity      int        `json:"quantity"`
+	Amount        float64    `json:"amount"`
+	BuyerID       int64      `json:"buyerId"`
+	Buyer         string     `json:"buyer"`
+	PaymentMethod string     `json:"paymentMethod"`
+	Network       string     `json:"network"`
+	TxHash        string     `json:"txHash,omitempty"`
+	Status        string     `json:"status"`
+	PaymentIssue  string     `json:"paymentIssue,omitempty"`
+	CreatedAt     time.Time  `json:"createdAt"`
+	PaidAt        *time.Time `json:"paidAt,omitempty"`
+}
+
 func validateMiniAppURL(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Scheme != "https" && !(u.Scheme == "http" && (u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1"))) {
@@ -517,6 +537,52 @@ func (a *App) miniAppOrders(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func adminPaymentMethod(network string) string {
+	switch network {
+	case "wallet":
+		return "Wallet balance"
+	case "polygon":
+		return "USDT · Polygon"
+	default:
+		return "USDT · BNB Smart Chain"
+	}
+}
+
+func adminMiniAppOrder(order Order) miniAppAdminOrder {
+	var paidAt *time.Time
+	if !order.PaidAt.IsZero() {
+		value := order.PaidAt
+		paidAt = &value
+	}
+	buyer := strings.TrimSpace(order.BuyerName)
+	if buyer == "" {
+		buyer = "Unknown buyer"
+	}
+	return miniAppAdminOrder{
+		ID: order.ID, SKU: order.SKU, Name: order.ProductName, Quantity: max(1, order.Quantity), Amount: order.Amount,
+		BuyerID: order.BuyerID, Buyer: buyer, PaymentMethod: adminPaymentMethod(order.Network), Network: order.Network,
+		TxHash: order.TxHash, Status: order.Status, PaymentIssue: order.PaymentIssue, CreatedAt: order.CreatedAt, PaidAt: paidAt,
+	}
+}
+
+func (a *App) miniAppAdminOrders(w http.ResponseWriter, r *http.Request) {
+	if _, ok := a.miniAppOwner(w, r); !ok {
+		return
+	}
+	if r.Method != http.MethodGet {
+		writeAPIError(w, http.StatusMethodNotAllowed, errors.New("method not allowed"))
+		return
+	}
+	a.store.mu.Lock()
+	orders := make([]miniAppAdminOrder, 0, len(a.store.data.Orders))
+	for _, order := range a.store.data.Orders {
+		orders = append(orders, adminMiniAppOrder(order))
+	}
+	a.store.mu.Unlock()
+	sort.Slice(orders, func(i, j int) bool { return orders[i].CreatedAt.After(orders[j].CreatedAt) })
+	writeJSON(w, http.StatusOK, map[string]any{"orders": orders})
+}
+
 func (a *App) publicMiniAppOrder(order Order) miniAppOrder {
 	wallet := ""
 	expiresAt := order.CreatedAt.Add(30 * time.Minute)
@@ -580,6 +646,7 @@ func (a *App) miniAppHandler() (http.Handler, error) {
 	mux.HandleFunc("/api/mini-app/orders", a.miniAppOrders)
 	mux.HandleFunc("/api/mini-app/admin/products", a.miniAppAdminProducts)
 	mux.HandleFunc("/api/mini-app/admin/products/", a.miniAppAdminProductItem)
+	mux.HandleFunc("/api/mini-app/admin/orders", a.miniAppAdminOrders)
 	mux.HandleFunc("/api/mini-app/admin/stock", a.miniAppAdminStock)
 	mux.HandleFunc("/api/mini-app/admin/stock/", a.miniAppAdminStockItem)
 	if publicURL, parseErr := url.Parse(a.cfg.MiniAppURL); parseErr == nil {
@@ -589,6 +656,7 @@ func (a *App) miniAppHandler() (http.Handler, error) {
 			mux.HandleFunc(prefix+"/api/mini-app/orders", a.miniAppOrders)
 			mux.HandleFunc(prefix+"/api/mini-app/admin/products", a.miniAppAdminProducts)
 			mux.HandleFunc(prefix+"/api/mini-app/admin/products/", a.miniAppAdminProductItem)
+			mux.HandleFunc(prefix+"/api/mini-app/admin/orders", a.miniAppAdminOrders)
 			mux.HandleFunc(prefix+"/api/mini-app/admin/stock", a.miniAppAdminStock)
 			mux.HandleFunc(prefix+"/api/mini-app/admin/stock/", a.miniAppAdminStockItem)
 			mux.Handle(prefix+"/", http.StripPrefix(prefix, miniAppStaticHandler(static)))

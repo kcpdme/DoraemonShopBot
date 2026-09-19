@@ -2,7 +2,7 @@
   "use strict";
 
   const tg = window.Telegram?.WebApp;
-  const state = { products: [], selected: null, order: null, isOwner: false, adminProducts: [], stock: [], adminSection: "overview" };
+  const state = { products: [], selected: null, order: null, isOwner: false, adminProducts: [], stock: [], adminOrders: [], adminSection: "overview" };
   const el = (id) => document.getElementById(id);
   const views = ["shop", "orders", "checkout", "success", "admin"];
 
@@ -190,6 +190,7 @@
       button.setAttribute("aria-current", active ? "page" : "false");
     });
     if (name === "stock" && loadStock) loadAdminStock();
+    if (name === "orders" && loadStock) loadAdminOrders();
   }
 
   function stockPriority(product) {
@@ -315,6 +316,81 @@
     });
   }
 
+  function adminStatus(status) {
+    return String(status || "unknown").replaceAll("_", " ");
+  }
+
+  function adminOrderTime(value) {
+    if (!value) return "—";
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString();
+  }
+
+  function transactionURL(order) {
+    if (!/^0x[0-9a-f]{64}$/i.test(order.txHash || "")) return "";
+    if (order.network === "polygon") return `https://polygonscan.com/tx/${order.txHash}`;
+    if (order.network === "bep20") return `https://bscscan.com/tx/${order.txHash}`;
+    return "";
+  }
+
+  function orderDetail(label, value) {
+    const row = node("div", "order-detail");
+    if (label === "TxID" || label === "Latest update") row.classList.add("wide");
+    row.append(node("span", "", label), node("strong", "", value));
+    return row;
+  }
+
+  function renderAdminOrders() {
+    const root = el("admin-orders");
+    root.replaceChildren();
+    const query = el("admin-order-search").value.trim().toLowerCase();
+    const orders = state.adminOrders.filter((order) => {
+      const searchable = [order.id, order.name, order.sku, order.buyer, order.buyerId, order.txHash, order.status, order.paymentMethod].join(" ").toLowerCase();
+      return !query || searchable.includes(query);
+    });
+    el("admin-order-count").textContent = query ? `${orders.length} results` : `${orders.length} orders`;
+    if (!state.adminOrders.length) {
+      root.append(empty("No orders have been created yet."));
+      return;
+    }
+    if (!orders.length) {
+      root.append(empty("No orders match this search."));
+      return;
+    }
+    orders.forEach((order) => {
+      const card = node("article", "admin-order");
+      const head = node("div", "admin-order-head");
+      const title = node("div", "order-main");
+      title.append(node("strong", "", `${order.name || order.sku} × ${order.quantity}`), node("small", "", `${order.amount.toFixed(2)} USDT · ${order.id}`));
+      head.append(title, node("span", `order-state ${String(order.status || "unknown")}`, adminStatus(order.status)));
+
+      const buyer = node("div", "order-buyer");
+      buyer.append(node("span", "", "Buyer"), node("strong", "", `${order.buyer || "Unknown buyer"} · ID ${order.buyerId || "—"}`));
+
+      const details = node("div", "order-details");
+      details.append(
+        orderDetail("Payment", order.paymentMethod || "—"),
+        orderDetail("Created", adminOrderTime(order.createdAt))
+      );
+      if (order.paidAt) details.append(orderDetail("Paid", adminOrderTime(order.paidAt)));
+      if (order.txHash) {
+        const tx = orderDetail("TxID", order.txHash);
+        const url = transactionURL(order);
+        if (url) {
+          const link = node("a", "transaction-link", "View transaction");
+          link.href = url;
+          link.target = "_blank";
+          link.rel = "noopener noreferrer";
+          tx.append(link);
+        }
+        details.append(tx);
+      }
+      if (order.paymentIssue) details.append(orderDetail("Latest update", order.paymentIssue));
+      card.append(head, buyer, details);
+      root.append(card);
+    });
+  }
+
   async function loadAdminStock() {
     const sku = selectedAdminSKU();
     if (!sku) {
@@ -328,6 +404,19 @@
       const data = await api(`api/mini-app/admin/stock?sku=${encodeURIComponent(sku)}`);
       state.stock = data.stock || [];
       renderAdminStock();
+    } catch (error) {
+      root.replaceChildren(empty(error.message));
+      showNotice(error.message);
+    }
+  }
+
+  async function loadAdminOrders() {
+    const root = el("admin-orders");
+    root.replaceChildren(empty("Loading orders…"));
+    try {
+      const data = await api("api/mini-app/admin/orders");
+      state.adminOrders = data.orders || [];
+      renderAdminOrders();
     } catch (error) {
       root.replaceChildren(empty(error.message));
       showNotice(error.message);
@@ -348,6 +437,7 @@
       renderStockSelect();
       setAdminSection(state.adminSection, false);
       if (state.adminSection === "stock") await loadAdminStock();
+      if (state.adminSection === "orders") await loadAdminOrders();
     } catch (error) {
       el("admin-products").replaceChildren(empty(error.message));
       el("admin-attention").replaceChildren(empty(error.message));
@@ -484,6 +574,7 @@
   el("open-stock-form").addEventListener("click", () => openStockFor(selectedAdminSKU(), true));
   el("cancel-stock-form").addEventListener("click", () => el("stock-form").classList.add("hidden"));
   el("admin-product-search").addEventListener("input", renderAdminProducts);
+  el("admin-order-search").addEventListener("input", renderAdminOrders);
   el("product-form").addEventListener("submit", createProduct);
   el("stock-form").addEventListener("submit", addStock);
   el("stock-sku").addEventListener("change", loadAdminStock);

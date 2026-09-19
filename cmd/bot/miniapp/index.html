@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="light dark">
   <title>Doraemon Shop</title>
-  <link rel="stylesheet" href="styles.css?v=20260918-admin-redesign">
+  <link rel="stylesheet" href="styles.css?v=20260919-admin-orders">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <script src="app.js?v=20260918-admin-redesign" defer></script>
+  <script src="app.js?v=20260919-admin-orders" defer></script>
 </head>
 <body>
   <header class="topbar">
@@ -84,6 +84,7 @@
         <button class="active" data-admin-section="overview" type="button">Overview</button>
         <button data-admin-section="products" type="button">Products</button>
         <button data-admin-section="stock" type="button">Stock</button>
+        <button data-admin-section="orders" type="button">Orders</button>
       </nav>
 
       <section id="admin-overview" data-admin-panel="overview">
@@ -144,6 +145,16 @@
 
         <div class="list-heading"><span id="admin-stock-count" class="count"></span><span>Only available items can be removed</span></div>
         <div id="admin-stock" class="admin-stock" aria-live="polite"></div>
+      </section>
+
+      <section id="admin-orders-section" data-admin-panel="orders" class="hidden">
+        <div class="section-toolbar">
+          <div><p class="section-kicker">Sales</p><h3>Orders</h3></div>
+        </div>
+
+        <label class="search-field"><span>Search orders</span><input id="admin-order-search" type="search" placeholder="Buyer, product, order ID, or TxID" autocomplete="off"></label>
+        <div class="list-heading"><span id="admin-order-count" class="count"></span><span>Newest orders first</span></div>
+        <div id="admin-orders" class="admin-orders" aria-live="polite"></div>
       </section>
     </section>
   </main>
