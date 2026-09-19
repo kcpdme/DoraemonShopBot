@@ -1,6 +1,6 @@
 # Contributing
 
-Thank you for helping improve Doraemon Shop Bot.
+Thank you for helping improve ZenitsuThunder Shop Bot.
 
 ## Before opening an issue
 

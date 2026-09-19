@@ -16,7 +16,7 @@ data/
 # Builds, coverage, and logs
 bin/
 dist/
-doraemon-bot
+zenitsu-shop-bot
 *.exe
 *.out
 coverage.*

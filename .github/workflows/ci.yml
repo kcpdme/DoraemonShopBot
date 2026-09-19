@@ -24,4 +24,4 @@ jobs:
       - name: Vet
         run: go vet ./...
       - name: Build
-        run: CGO_ENABLED=0 go build -trimpath -o /tmp/doraemon-bot ./cmd/bot
+        run: CGO_ENABLED=0 go build -trimpath -o /tmp/zenitsu-shop-bot ./cmd/bot

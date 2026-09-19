@@ -16,7 +16,7 @@ DATA = Path('/var/lib/doraemon-shop/store.json')
 SERVICE = 'doraemon-shop'
 
 def request(url, body):
-    req = urllib.request.Request(url, json.dumps(body).encode(), {'Content-Type': 'application/json', 'User-Agent': 'DoraemonShop-Deployment/1.0'})
+    req = urllib.request.Request(url, json.dumps(body).encode(), {'Content-Type': 'application/json', 'User-Agent': 'ZenitsuThunderShop-Deployment/1.0'})
     with urllib.request.urlopen(req, timeout=10) as response:
         return json.load(response)
 

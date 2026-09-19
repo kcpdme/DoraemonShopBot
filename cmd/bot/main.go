@@ -1,4 +1,4 @@
-// Doraemon Shop Bot is a Telegram-only digital-goods store.
+// ZenitsuThunder Shop Bot is a Telegram-only digital-goods store.
 // It deliberately uses the Telegram Bot API directly so deployment needs no web UI.
 package main
 
@@ -1280,7 +1280,7 @@ func main() {
 			log.Fatal(err)
 		}
 	}
-	log.Printf("Doraemon Shop Bot started; owner=%d", cfg.OwnerID)
+	log.Printf("ZenitsuThunder Shop Bot started; owner=%d", cfg.OwnerID)
 	if err := app.run(context.Background()); err != nil {
 		log.Fatal(err)
 	}

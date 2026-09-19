@@ -287,7 +287,7 @@ func (a *App) rpcRaw(ctx context.Context, endpoint, method string, params []any)
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "DoraemonShop-Deployment/1.0")
+	req.Header.Set("User-Agent", "ZenitsuThunderShop/1.0")
 	r, err := a.tg.client.Do(req)
 	if err != nil {
 		return nil, errors.New("RPC connection unavailable")

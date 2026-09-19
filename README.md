@@ -1,4 +1,4 @@
-# Doraemon Shop Bot
+# ZenitsuThunder Shop Bot
 
 An open-source Telegram storefront for digital goods, written in Go. Buyers can shop through chat or an optional Telegram Mini App, pay with USDT on BNB Smart Chain or Polygon, and receive inventory privately after on-chain confirmation.
 
@@ -32,8 +32,8 @@ The project has no database or framework dependency. A single process runs the T
 1. Clone the repository and enter it.
 
    ```bash
-   git clone https://github.com/your-account/doraemon-shop-bot.git
-   cd doraemon-shop-bot
+   git clone https://github.com/your-account/zenitsu-thunder-shop-bot.git
+   cd zenitsu-thunder-shop-bot
    ```
 
 2. Create a local environment file. It is ignored by Git.
@@ -144,7 +144,7 @@ Build a production Linux binary:
 
 ```bash
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-  go build -trimpath -ldflags='-s -w' -o doraemon-bot ./cmd/bot
+  go build -trimpath -ldflags='-s -w' -o zenitsu-shop-bot ./cmd/bot
 ```
 
 The Mini App frontend lives in `cmd/bot/miniapp/` and is embedded by `cmd/bot/miniapp.go`. API routes are:
@@ -164,6 +164,8 @@ An example hardened systemd unit is included at `deploy/doraemon-shop.service`. 
 - environment: `/etc/doraemon-shop.env`
 - writable data: `/var/lib/doraemon-shop/store.json`
 
+These legacy internal service and filesystem names are retained for compatibility with existing installations. They are not displayed to customers.
+
 `deploy/release.py` performs preflight checks, backs up the binary/config/data, atomically replaces the binary, restarts the service, and restores the prior release if startup fails. Review and adapt both deployment files for your own Linux account, paths, TLS proxy, and backup policy before use.
 
 ## Payment limitations
@@ -181,4 +183,4 @@ Issues and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) be
 
 Released under the [MIT License](LICENSE).
 
-This community project is not affiliated with Telegram, Tether, BNB Chain, Polygon, or the owners of the Doraemon trademark.
+This community project is not affiliated with Telegram, Tether, BNB Chain, or Polygon.

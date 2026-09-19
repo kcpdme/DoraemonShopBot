@@ -1,5 +1,5 @@
 [Unit]
-Description=Doraemon Telegram Shop Bot
+Description=ZenitsuThunder Telegram Shop Bot
 After=network-online.target
 Wants=network-online.target
 

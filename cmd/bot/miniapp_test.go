@@ -210,7 +210,7 @@ func TestMiniAppServesIndexForPublicURLPath(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/shop/", nil)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "Doraemon Shop") {
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "ZenitsuThunder Shop") {
 		t.Fatalf("status=%d body=%q", response.Code, response.Body.String())
 	}
 	request = httptest.NewRequest(http.MethodGet, "/shop/styles.css", nil)
