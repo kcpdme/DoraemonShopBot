@@ -2,6 +2,7 @@ package main
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -32,6 +33,43 @@ func TestCreateOrderReservesOnlyAvailableStock(t *testing.T) {
 func TestSKU(t *testing.T) {
 	if got := sku(" pro key_2026 "); got != "PROKEY2026" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestCatalogStockIndicators(t *testing.T) {
+	store, err := openStore(filepath.Join(t.TempDir(), "store.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, product := range []Product{
+		{SKU: "GREEN", Name: "Green stock", PriceUSDT: 1, Active: true, CreatedAt: time.Now()},
+		{SKU: "BLUE", Name: "Blue stock", PriceUSDT: 2, Active: true, CreatedAt: time.Now().Add(-time.Second)},
+		{SKU: "RED", Name: "Red stock", PriceUSDT: 3, Active: true, CreatedAt: time.Now().Add(-2 * time.Second)},
+	} {
+		store.data.Products[product.SKU] = product
+	}
+	for i := 0; i < 6; i++ {
+		store.data.Stock["green-"+string(rune('a'+i))] = StockItem{SKU: "GREEN"}
+	}
+	for i := 0; i < 5; i++ {
+		store.data.Stock["blue-"+string(rune('a'+i))] = StockItem{SKU: "BLUE"}
+	}
+
+	_, keyboard := (&App{store: store}).productsText()
+	if keyboard == nil {
+		t.Fatal("catalog has no buttons")
+	}
+	buttons := []string{}
+	for _, row := range keyboard.InlineKeyboard {
+		for _, button := range row {
+			buttons = append(buttons, button.Text)
+		}
+	}
+	joined := strings.Join(buttons, "\n")
+	for _, want := range []string{"🟢 Green stock · $1.00 · 6 available", "🔵 Blue stock · $2.00 · 5 available", "🔴 Red stock · $3.00 · Sold out"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("catalog missing %q in %s", want, joined)
+		}
 	}
 }
 

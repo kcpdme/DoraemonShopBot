@@ -375,13 +375,23 @@ func (a *App) productsText() (string, *Markup) {
 				n++
 			}
 		}
-		availability := fmt.Sprintf("%d available", n)
-		if n == 0 {
-			availability = "Sold out"
-		}
-		rows = append(rows, []Button{{Text: fmt.Sprintf("🛒 %s · $%.2f · %s", p.Name, p.PriceUSDT, availability), Data: "product:" + p.SKU}})
+		indicator, availability := catalogStockIndicator(n)
+		rows = append(rows, []Button{{Text: fmt.Sprintf("%s %s · $%.2f · %s", indicator, p.Name, p.PriceUSDT, availability), Data: "product:" + p.SKU}})
 	}
 	return text, &Markup{InlineKeyboard: rows}
+}
+
+// Telegram inline buttons do not support arbitrary background colors. Use the
+// matching colored status dot so stock availability is still clear at a glance.
+func catalogStockIndicator(stock int) (string, string) {
+	switch {
+	case stock <= 0:
+		return "🔴", "Sold out"
+	case stock > 5:
+		return "🟢", fmt.Sprintf("%d available", stock)
+	default:
+		return "🔵", fmt.Sprintf("%d available", stock)
+	}
 }
 func (a *App) broadcast(ctx context.Context, msg string, includeChannel bool) {
 	a.store.mu.Lock()
