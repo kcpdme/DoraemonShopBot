@@ -88,7 +88,7 @@ func (a *App) productText(code string) (string, *Markup) {
 	if !ok || !p.Active {
 		return "This product is no longer available. Explore the shop for something else.", checkoutNavigation()
 	}
-	text := fmt.Sprintf("🛍 <b>PRODUCT DETAILS</b>\n\n📦 <b>%s</b>\n\n%s\n\n<blockquote>💵 <b>$%.2f USDT</b> per code\n📊 <b>%d available</b>\n⚡ Automatic private delivery after payment</blockquote>\n\nChoose your quantity to continue.", esc(p.Name), esc(p.Description), p.PriceUSDT, stock)
+	text := fmt.Sprintf("🛍 <b>PRODUCT DETAILS</b>\n\n📦 <b>%s</b>\n\n%s\n\n<blockquote>💵 <b>$%.2f USDT</b>\n📊 <b>%d available</b>\n⚡ Automatic private delivery after payment</blockquote>\n\nChoose your quantity to continue.", esc(p.Name), esc(p.Description), p.PriceUSDT, stock)
 	rows := [][]Button{}
 	if stock > 0 {
 		rows = append(rows, []Button{{Text: fmt.Sprintf("🛒 Buy now · $%.2f", p.PriceUSDT), Data: "buy:" + code}})
@@ -150,7 +150,7 @@ func (a *App) quantityText(sku string) (string, *Markup) {
 	}
 	rows = append(rows, []Button{{Text: "🛒 Continue to payment", Data: fmt.Sprintf("qty:%s:1", sku)}})
 	rows = append(rows, []Button{{Text: "‹ Back to product", Data: "product:" + sku}, {Text: "🏠 Menu", Data: "home"}})
-	return fmt.Sprintf("🔢 <b>SELECT QUANTITY</b>\n<i>Step 1 of 3 · Quantity</i>\n\n📦 <b>%s</b>\n💵 $%.2f per code · 📊 %d available\n\n<blockquote>🧾 1 × $%.2f\n💰 Total: <b>$%.2f USDT</b></blockquote>\n\nHow many codes would you like?", esc(p.Name), p.PriceUSDT, stock, p.PriceUSDT, p.PriceUSDT), &Markup{InlineKeyboard: rows}
+	return fmt.Sprintf("🔢 <b>SELECT QUANTITY</b>\n<i>Step 1 of 3 · Quantity</i>\n\n📦 <b>%s</b>\n💵 $%.2f USDT · 📊 %d available\n\n<blockquote>🧾 1 × $%.2f\n💰 Total: <b>$%.2f USDT</b></blockquote>\n\nHow many would you like?", esc(p.Name), p.PriceUSDT, stock, p.PriceUSDT, p.PriceUSDT), &Markup{InlineKeyboard: rows}
 }
 
 func (a *App) networkChoice(sku string, qty int) (string, *Markup, error) {

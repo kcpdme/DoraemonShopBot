@@ -72,6 +72,18 @@ func TestCheckoutQuantityRespectsAvailableStockAndShowsTotal(t *testing.T) {
 	}
 }
 
+func TestProductDetailsOmitsPerCodeWording(t *testing.T) {
+	a := checkoutUIFixture(t, 2)
+	text, _ := a.productText("DIGITAL")
+	if !strings.Contains(text, "$2.25 USDT") || strings.Contains(strings.ToLower(text), "per code") {
+		t.Fatalf("product details should show price without per-code wording: %s", text)
+	}
+	text, _ = a.quantityText("DIGITAL")
+	if strings.Contains(strings.ToLower(text), "per code") || strings.Contains(strings.ToLower(text), "how many codes") {
+		t.Fatalf("quantity screen still calls items codes: %s", text)
+	}
+}
+
 func TestSoldOutProductHasNoBuyButton(t *testing.T) {
 	a := checkoutUIFixture(t, 0)
 	text, kb := a.productText("DIGITAL")
