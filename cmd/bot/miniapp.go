@@ -59,6 +59,7 @@ type miniAppAdminProduct struct {
 type miniAppStockItem struct {
 	ID      string    `json:"id"`
 	SKU     string    `json:"sku"`
+	Payload string    `json:"payload"`
 	State   string    `json:"state"`
 	AddedAt time.Time `json:"addedAt"`
 }
@@ -380,7 +381,12 @@ func (a *App) deleteMiniAppProduct(w http.ResponseWriter, productSKU string) {
 }
 
 func (a *App) miniAppAdminStock(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	if _, ok := a.miniAppOwner(w, r); !ok {
+		return
+	}
+	if r.Method == http.MethodDelete {
+		a.miniAppClearStock(w, r)
 		return
 	}
 	if r.Method != http.MethodGet && r.Method != http.MethodPost {
@@ -393,11 +399,16 @@ func (a *App) miniAppAdminStock(w http.ResponseWriter, r *http.Request) {
 		items := make([]miniAppStockItem, 0)
 		for _, item := range a.store.data.Stock {
 			if code == "" || item.SKU == code {
-				items = append(items, miniAppStockItem{ID: item.ID, SKU: item.SKU, State: miniAppStockState(item), AddedAt: item.AddedAt})
+				items = append(items, miniAppStockItem{ID: item.ID, SKU: item.SKU, Payload: item.Payload, State: miniAppStockState(item), AddedAt: item.AddedAt})
 			}
 		}
 		a.store.mu.Unlock()
-		sort.Slice(items, func(i, j int) bool { return items[i].AddedAt.After(items[j].AddedAt) })
+		sort.Slice(items, func(i, j int) bool {
+			if items[i].AddedAt.Equal(items[j].AddedAt) {
+				return items[i].ID < items[j].ID
+			}
+			return items[i].AddedAt.After(items[j].AddedAt)
+		})
 		writeJSON(w, http.StatusOK, map[string]any{"stock": items})
 		return
 	}
@@ -440,6 +451,35 @@ func (a *App) miniAppAdminStock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"added": len(payloads)})
+}
+
+// Called only after the owner authorization check in miniAppAdminStock.
+func (a *App) miniAppClearStock(w http.ResponseWriter, r *http.Request) {
+	code := sku(r.URL.Query().Get("sku"))
+	if code == "" {
+		writeAPIError(w, http.StatusBadRequest, errors.New("choose a product to clear"))
+		return
+	}
+	a.store.mu.Lock()
+	defer a.store.mu.Unlock()
+	if _, exists := a.store.data.Products[code]; !exists {
+		writeAPIError(w, http.StatusNotFound, errors.New("product not found"))
+		return
+	}
+	removed := 0
+	for stockID, item := range a.store.data.Stock {
+		if item.SKU == code && !item.Sold && item.OrderID == "" {
+			removed++
+			delete(a.store.data.Stock, stockID)
+		}
+	}
+	if removed > 0 {
+		if err := a.store.saveLocked(); err != nil {
+			writeAPIError(w, http.StatusInternalServerError, errors.New("could not clear stock"))
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"removed": removed})
 }
 
 func (a *App) miniAppAdminStockItem(w http.ResponseWriter, r *http.Request) {

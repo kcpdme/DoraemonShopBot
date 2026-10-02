@@ -162,6 +162,9 @@ legend { margin-bottom: 9px; }
 .product-facts .low { color: #bd3e4b; font-weight: 750; }
 .admin-stock-item small { display: block; margin-top: 4px; color: var(--tg-theme-hint-color, #68768b); }
 .admin-stock-item { align-items: start; }
+.stock-content { min-width: 0; flex: 1; }
+.stock-payload { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.5 monospace; user-select: text; }
+.stock-bulk-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
 .admin-stock-item > div:last-child { display: grid; justify-items: end; gap: 7px; }
 .state { flex: 0 0 auto; padding: 4px 7px; border-radius: 999px; font-size: 11px; font-weight: 800; text-transform: capitalize; }
 .state.available { color: #158151; background: color-mix(in srgb, #158151 14%, transparent); }

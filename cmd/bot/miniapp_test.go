@@ -141,8 +141,8 @@ func TestMiniAppAdminRequiresOwnerAndManagesPrivateStock(t *testing.T) {
 
 	list := httptest.NewRecorder()
 	app.miniAppAdminStock(list, miniAppOwnerRequest(t, http.MethodGet, "/api/mini-app/admin/stock?sku=KEY-1", "test-token", 7, ""))
-	if list.Code != http.StatusOK || strings.Contains(list.Body.String(), "secret-one") || strings.Contains(list.Body.String(), "secret-two") {
-		t.Fatalf("admin stock list leaked payload or failed: status=%d body=%s", list.Code, list.Body.String())
+	if list.Code != http.StatusOK || !strings.Contains(list.Body.String(), `"payload":"secret-one"`) || !strings.Contains(list.Body.String(), `"payload":"secret-two"`) {
+		t.Fatalf("owner stock list did not include payloads: status=%d body=%s", list.Code, list.Body.String())
 	}
 
 	var stockID string
@@ -218,5 +218,85 @@ func TestMiniAppServesIndexForPublicURLPath(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), ".catalog") {
 		t.Fatalf("prefixed stylesheet status=%d body=%q", response.Code, response.Body.String())
+	}
+}
+
+func TestMiniAppStockSecretsAndBulkClear(t *testing.T) {
+	store, err := openStore(filepath.Join(t.TempDir(), "store.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := &App{cfg: Config{Token: "test-token", OwnerID: 7}, store: store}
+	store.data.Products["KEY"] = Product{SKU: "KEY"}
+	for _, item := range []StockItem{
+		{ID: "available-1", SKU: "KEY", Payload: "private-one"},
+		{ID: "available-2", SKU: "KEY", Payload: "private-two"},
+		{ID: "reserved", SKU: "KEY", Payload: "reserved-secret", OrderID: "pending"},
+		{ID: "sold", SKU: "KEY", Payload: "sold-secret", Sold: true},
+		{ID: "other", SKU: "OTHER", Payload: "other-secret"},
+	} {
+		store.data.Stock[item.ID] = item
+	}
+	if err := store.save(); err != nil {
+		t.Fatal(err)
+	}
+	for _, method := range []string{http.MethodGet, http.MethodDelete} {
+		for _, owner := range []int64{0, 8} {
+			req := miniAppOwnerRequest(t, method, "/api/mini-app/admin/stock?sku=KEY", "test-token", owner, "")
+			if owner == 0 {
+				req.Header.Del("Authorization")
+			}
+			result := httptest.NewRecorder()
+			app.miniAppAdminStock(result, req)
+			if result.Code != http.StatusUnauthorized && result.Code != http.StatusForbidden {
+				t.Fatalf("unauthorized %s: %d", method, result.Code)
+			}
+			if strings.Contains(result.Body.String(), "secret") || len(store.data.Stock) != 5 {
+				t.Fatal("unauthorized stock access")
+			}
+		}
+	}
+	list := httptest.NewRecorder()
+	app.miniAppAdminStock(list, miniAppOwnerRequest(t, http.MethodGet, "/api/mini-app/admin/stock?sku=KEY", "test-token", 7, ""))
+	if list.Code != http.StatusOK || !strings.Contains(list.Body.String(), "private-one") || strings.Contains(list.Body.String(), "other-secret") || list.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("invalid owner list: %s", list.Body.String())
+	}
+	for _, test := range []struct {
+		query  string
+		status int
+	}{{"", 400}, {"?sku=MISSING", 404}} {
+		result := httptest.NewRecorder()
+		app.miniAppAdminStock(result, miniAppOwnerRequest(t, http.MethodDelete, "/api/mini-app/admin/stock"+test.query, "test-token", 7, ""))
+		if result.Code != test.status || len(store.data.Stock) != 5 {
+			t.Fatalf("invalid bulk delete: %d", result.Code)
+		}
+	}
+	// A failed persistence write must leave the available stock intact.
+	originalPath := store.path
+	store.path = filepath.Join(originalPath, "invalid", "store.json")
+	failed := httptest.NewRecorder()
+	app.miniAppAdminStock(failed, miniAppOwnerRequest(t, http.MethodDelete, "/api/mini-app/admin/stock?sku=KEY", "test-token", 7, ""))
+	if failed.Code != 500 || len(store.data.Stock) != 5 {
+		t.Fatalf("failed clear lost stock: %d, %d", failed.Code, len(store.data.Stock))
+	}
+	store.path = originalPath
+	for _, count := range []int{2, 0} {
+		result := httptest.NewRecorder()
+		app.miniAppAdminStock(result, miniAppOwnerRequest(t, http.MethodDelete, "/api/mini-app/admin/stock?sku=KEY", "test-token", 7, ""))
+		if result.Code != 200 || !strings.Contains(result.Body.String(), `"removed":`+strconv.Itoa(count)) {
+			t.Fatalf("clear: %d %s", result.Code, result.Body.String())
+		}
+	}
+	persisted, err := openStore(originalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(persisted.data.Stock) != 3 {
+		t.Fatalf("remaining stock: %d", len(persisted.data.Stock))
+	}
+	for _, id := range []string{"reserved", "sold", "other"} {
+		if _, ok := persisted.data.Stock[id]; !ok {
+			t.Fatalf("removed protected stock %s", id)
+		}
 	}
 }

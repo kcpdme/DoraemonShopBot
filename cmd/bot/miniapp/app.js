@@ -5,6 +5,9 @@
   const state = { products: [], selected: null, order: null, isOwner: false, adminProducts: [], stock: [], adminOrders: [], adminSection: "overview", catalogQuery: "", catalogFilter: "all" };
   const el = (id) => document.getElementById(id);
   const views = ["shop", "orders", "checkout", "success", "admin"];
+  let stockLoadVersion = 0;
+  let stockLoading = false;
+  let stockClearing = false;
 
   if (tg) {
     tg.ready();
@@ -335,6 +338,8 @@
     const root = el("admin-stock");
     root.replaceChildren();
     const available = state.stock.filter((item) => item.state === "available").length;
+    el("copy-all-stock").disabled = stockLoading || stockClearing || !available;
+    el("clear-all-stock").disabled = stockLoading || stockClearing || !available;
     el("admin-stock-count").textContent = `${available} available · ${state.stock.length} total`;
     if (!state.stock.length) {
       root.append(empty("No stock items for this product."));
@@ -342,11 +347,15 @@
     }
     state.stock.forEach((item) => {
       const card = node("article", "admin-stock-item");
-      const copy = node("div");
-      copy.append(node("strong", "", item.id));
+      const copy = node("div", "stock-content");
+      copy.append(node("pre", "stock-payload", item.payload));
       copy.append(node("small", "", `${item.sku} · added ${new Date(item.addedAt).toLocaleString()}`));
       const actions = node("div");
       actions.append(node("span", `state ${item.state}`, item.state));
+      const copyButton = node("button", "edit-price", "Copy");
+      copyButton.type = "button";
+      copyButton.addEventListener("click", () => copyStockText(item.payload, "Stock item copied."));
+      actions.append(copyButton);
       if (item.state === "available") {
         const remove = node("button", "remove-stock", "Remove");
         remove.type = "button";
@@ -434,7 +443,11 @@
   }
 
   async function loadAdminStock() {
+    const version = ++stockLoadVersion;
     const sku = selectedAdminSKU();
+    state.stock = [];
+    stockLoading = !!sku;
+    renderAdminStock();
     if (!sku) {
       state.stock = [];
       renderAdminStock();
@@ -444,9 +457,13 @@
     root.replaceChildren(empty("Loading stock…"));
     try {
       const data = await api(`api/mini-app/admin/stock?sku=${encodeURIComponent(sku)}`);
+      if (version !== stockLoadVersion) return;
       state.stock = data.stock || [];
+      stockLoading = false;
       renderAdminStock();
     } catch (error) {
+      if (version !== stockLoadVersion) return;
+      stockLoading = false;
       root.replaceChildren(empty(error.message));
       showNotice(error.message);
     }
@@ -587,6 +604,67 @@
     }
   }
 
+  async function copyStockText(text, message) {
+    try {
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch (_) {
+        // Older Telegram webviews may not support the Clipboard API.
+        const field = node("textarea");
+        field.value = text;
+        field.readOnly = true;
+        field.style.cssText = "position:fixed;left:-9999px;top:0";
+        const focused = document.activeElement;
+        document.body.append(field);
+        try {
+          field.select();
+          field.setSelectionRange(0, field.value.length);
+          if (!document.execCommand("copy")) throw new Error("Copy failed. Select the stock text and copy it manually.");
+        } finally {
+          field.remove();
+          focused?.focus({ preventScroll: true });
+        }
+      }
+      showNotice(message);
+    } catch (error) {
+      showNotice(error.message);
+    }
+  }
+
+  function copyAllStock() {
+    if (stockLoading || stockClearing) return;
+    const sku = selectedAdminSKU();
+    const product = state.adminProducts.find((item) => item.sku === sku);
+    const items = state.stock.filter((item) => item.sku === sku && item.state === "available");
+    if (!product || !items.length) return;
+    const instructions = product.deliveryInstruction.trim();
+    const payloads = items.map((item) => item.payload).join("\n");
+    copyStockText(instructions ? `${instructions}\n\n${payloads}` : payloads, `${items.length} stock items copied with delivery instructions.`);
+  }
+
+  async function clearAllStock() {
+    if (stockLoading || stockClearing) return;
+    const sku = selectedAdminSKU();
+    const product = state.adminProducts.find((item) => item.sku === sku);
+    const available = state.stock.filter((item) => item.sku === sku && item.state === "available").length;
+    if (!product || !available) return;
+    if (!window.confirm(`Clear all ${available} available stock items for ${product.name}? This cannot be undone. Reserved and sold items will be kept.`)) return;
+    stockClearing = true;
+    renderAdminStock();
+    showNotice("");
+    try {
+      const data = await api(`api/mini-app/admin/stock?sku=${encodeURIComponent(sku)}`, { method: "DELETE" });
+      await loadAdmin();
+      showNotice(`${data.removed} stock items cleared from ${product.name}.`);
+      haptic("medium");
+    } catch (error) {
+      showNotice(error.message);
+    } finally {
+      stockClearing = false;
+      renderAdminStock();
+    }
+  }
+
   el("refresh").addEventListener("click", loadCatalog);
   el("catalog-search").addEventListener("input", (event) => {
     state.catalogQuery = event.target.value;
@@ -630,6 +708,8 @@
   el("product-form").addEventListener("submit", createProduct);
   el("stock-form").addEventListener("submit", addStock);
   el("stock-sku").addEventListener("change", loadAdminStock);
+  el("copy-all-stock").addEventListener("click", copyAllStock);
+  el("clear-all-stock").addEventListener("click", clearAllStock);
   document.querySelectorAll("[data-view]").forEach((button) => button.addEventListener("click", () => {
     if (button.dataset.view === "orders") loadOrders();
     else if (button.dataset.view === "admin") loadAdmin();

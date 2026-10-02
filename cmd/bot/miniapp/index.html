@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="light dark">
   <title>ZenitsuThunder Shop</title>
-  <link rel="stylesheet" href="styles.css?v=20260919-catalog-redesign">
+  <link rel="stylesheet" href="styles.css?v=20261003-stock-actions">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <script src="app.js?v=20260919-catalog-redesign" defer></script>
+  <script src="app.js?v=20261003-stock-actions" defer></script>
 </head>
 <body>
   <header class="topbar">
@@ -164,11 +164,16 @@
         <form id="stock-form" class="task-panel hidden">
           <div class="task-panel-heading"><div><p class="section-kicker">Inventory</p><h3>Add private stock</h3></div><button id="cancel-stock-form" class="text-button" type="button">Cancel</button></div>
           <label>Delivery stock <textarea id="stock-payloads" maxlength="60000" rows="8" required placeholder="One private delivery item per line"></textarea></label>
-          <p class="fine-print">Each non-empty line becomes one delivery item. Values remain hidden and are sent only after payment.</p>
+          <p class="fine-print">Each non-empty line becomes one delivery item. Values are visible only to the owner and sent to buyers after payment.</p>
           <button id="add-stock" class="primary" type="submit">Add stock</button>
         </form>
 
         <div class="list-heading"><span id="admin-stock-count" class="count"></span><span>Only available items can be removed</span></div>
+        <div class="stock-bulk-actions">
+          <button id="copy-all-stock" class="edit-price" type="button" disabled>Copy all stocks</button>
+          <button id="clear-all-stock" class="remove-stock" type="button" disabled>Clear all stocks</button>
+        </div>
+        <p class="fine-print">Bulk actions apply to available stock for this product. Copy all includes delivery instructions once, then each item on its own line. Reserved and sold items are kept.</p>
         <div id="admin-stock" class="admin-stock" aria-live="polite"></div>
       </section>
 
