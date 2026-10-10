@@ -45,9 +45,10 @@ key. A failed Telegram key delivery leaves the current key active.
 A key can spend its customer's wallet funds and retrieve their private API
 purchases. Keep it on your backend and send it only over HTTPS. To fund orders,
 use `/wallet` in the bot; existing on-chain verification credits the wallet.
-When a channel gate is configured, customers must be members to generate/rotate
-keys or place API orders. They can still read existing API purchases and revoke
-keys after leaving the channel.
+Joining the updates channel is optional by default. Only when
+`REQUIRE_CHANNEL_MEMBERSHIP=true` is explicitly configured must customers be
+members to generate/rotate keys or place API orders. They can still read existing
+API purchases and revoke keys after leaving the channel.
 
 ## Authentication and prices
 

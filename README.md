@@ -64,7 +64,9 @@ Each stock line is one deliverable unit—for example, one license key, account 
 | --- | --- | --- |
 | `BOT_TOKEN` | Yes | Secret token issued by BotFather. |
 | `OWNER_TELEGRAM_ID` | Yes | Numeric Telegram user ID allowed to administer the store. |
-| `SALES_CHANNEL` | No | Public `@channel` handle or numeric channel ID. Enables membership gating and announcements. |
+| `SALES_CHANNEL` | No | Public `@channel` handle or numeric channel ID for announcements. Joining is optional by default. |
+| `REQUIRE_CHANNEL_MEMBERSHIP` | No | Defaults to `false`. Set `true` only to explicitly require channel membership for shopping. |
+| `SALES_CHANNEL_URL` | No | HTTPS `t.me` public or invite link for the updates button; required for a join button when using a numeric channel ID. |
 | `BEP20_USDT_ADDRESS` | Yes | Receiving wallet for BNB Smart Chain payments. |
 | `POLYGON_USDT_ADDRESS` | Yes | Receiving wallet for Polygon payments. |
 | `BEP20_USDT_CONTRACT` | Yes | Exact official USDT contract on BNB Smart Chain. |

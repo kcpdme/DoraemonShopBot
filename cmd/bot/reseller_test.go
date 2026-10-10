@@ -304,6 +304,7 @@ func TestResellerRateLimitAndMembership(t *testing.T) {
 		t.Run(fmt.Sprint(failure), func(t *testing.T) {
 			a, token, h := resellerFixture(t)
 			a.cfg.Channel = "@test"
+			a.cfg.RequireChannel = true
 			a.tg = &TG{client: &http.Client{Transport: paymentTransport(func(r *http.Request) (*http.Response, error) {
 				if failure {
 					return nil, errors.New("offline")
@@ -418,6 +419,7 @@ func TestResellerKeySaveFailurePreservesPreviousKey(t *testing.T) {
 func TestResellerRevokedDuringMembershipCheckCannotSpend(t *testing.T) {
 	a, token, h := resellerFixture(t)
 	a.cfg.Channel = "@test"
+	a.cfg.RequireChannel = true
 	a.tg = &TG{client: &http.Client{Transport: paymentTransport(func(r *http.Request) (*http.Response, error) {
 		a.store.mu.Lock()
 		delete(a.store.data.ResellerKeys, resellerKeyHash(token))

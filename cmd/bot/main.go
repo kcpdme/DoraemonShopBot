@@ -26,7 +26,9 @@ import (
 type Config struct {
 	Token          string
 	OwnerID        int64
-	Channel        string // @channel or numeric channel id; bot must be an administrator.
+	Channel        string // @channel or numeric channel id for announcements.
+	ChannelJoinURL string // Optional public/invite link, separate from the Bot API chat ID.
+	RequireChannel bool   // Membership is optional unless explicitly enabled.
 	MiniAppURL     string // Public HTTPS URL Telegram opens for the optional Mini App.
 	HTTPAddr       string // Local address serving the Mini App and its API.
 	BEP20Address   string
@@ -43,7 +45,19 @@ func config() (Config, error) {
 	if err != nil || owner == 0 {
 		return Config{}, errors.New("OWNER_TELEGRAM_ID must be a numeric Telegram user ID")
 	}
-	c := Config{Token: os.Getenv("BOT_TOKEN"), OwnerID: owner, Channel: os.Getenv("SALES_CHANNEL"), MiniAppURL: strings.TrimSpace(os.Getenv("MINI_APP_PUBLIC_URL")), HTTPAddr: strings.TrimSpace(os.Getenv("MINI_APP_LISTEN_ADDR")), BEP20Address: os.Getenv("BEP20_USDT_ADDRESS"), PolygonAddress: os.Getenv("POLYGON_USDT_ADDRESS"), BEP20USDT: os.Getenv("BEP20_USDT_CONTRACT"), PolygonUSDT: os.Getenv("POLYGON_USDT_CONTRACT"), BSCRPCURL: os.Getenv("BSC_RPC_URL"), PolygonRPCURL: os.Getenv("POLYGON_RPC_URL"), DataFile: os.Getenv("DATA_FILE")}
+	c := Config{Token: os.Getenv("BOT_TOKEN"), OwnerID: owner, Channel: strings.TrimSpace(os.Getenv("SALES_CHANNEL")), ChannelJoinURL: strings.TrimSpace(os.Getenv("SALES_CHANNEL_URL")), MiniAppURL: strings.TrimSpace(os.Getenv("MINI_APP_PUBLIC_URL")), HTTPAddr: strings.TrimSpace(os.Getenv("MINI_APP_LISTEN_ADDR")), BEP20Address: os.Getenv("BEP20_USDT_ADDRESS"), PolygonAddress: os.Getenv("POLYGON_USDT_ADDRESS"), BEP20USDT: os.Getenv("BEP20_USDT_CONTRACT"), PolygonUSDT: os.Getenv("POLYGON_USDT_CONTRACT"), BSCRPCURL: os.Getenv("BSC_RPC_URL"), PolygonRPCURL: os.Getenv("POLYGON_RPC_URL"), DataFile: os.Getenv("DATA_FILE")}
+	if raw := strings.TrimSpace(os.Getenv("REQUIRE_CHANNEL_MEMBERSHIP")); raw != "" {
+		c.RequireChannel, err = strconv.ParseBool(raw)
+		if err != nil {
+			return Config{}, errors.New("REQUIRE_CHANNEL_MEMBERSHIP must be true or false")
+		}
+	}
+	if c.RequireChannel && c.Channel == "" {
+		return Config{}, errors.New("SALES_CHANNEL is required when REQUIRE_CHANNEL_MEMBERSHIP is true")
+	}
+	if c.ChannelJoinURL != "" && !validChannelJoinURL(c.ChannelJoinURL) {
+		return Config{}, errors.New("SALES_CHANNEL_URL must be an HTTPS t.me public channel or invite link")
+	}
 	if c.Token == "" || c.BEP20Address == "" || c.PolygonAddress == "" {
 		return Config{}, errors.New("BOT_TOKEN, BEP20_USDT_ADDRESS and POLYGON_USDT_ADDRESS are required")
 	}
@@ -256,6 +270,11 @@ func (t *TG) call(ctx context.Context, method string, v any, out any) error {
 	req.Header.Set("Content-Type", "application/json")
 	r, err := t.client.Do(req)
 	if err != nil {
+		// net/http wraps failures with the request URL, which contains the bot token.
+		var requestErr *url.Error
+		if errors.As(err, &requestErr) {
+			return fmt.Errorf("telegram %s: %w", method, requestErr.Err)
+		}
 		return err
 	}
 	defer r.Body.Close()
@@ -424,6 +443,13 @@ func (a *App) broadcast(ctx context.Context, msg string, includeChannel bool) {
 func (a *App) home(ctx context.Context, chat, userID int64) {
 	rows := [][]Button{{{Text: "🛍 Shop", Data: "catalog"}}, {{Text: "💰 My wallet", Data: "wallet"}, {Text: "📦 My orders", Data: "orders"}}, {{Text: "💬 Support", Data: "support"}}}
 	rows = append(rows, []Button{{Text: "🔑 Reseller API", Data: "apikey:menu"}})
+	if joinURL := a.channelURL(); joinURL != "" {
+		label := "📢 Updates channel (optional)"
+		if a.cfg.RequireChannel {
+			label = "📢 Updates channel"
+		}
+		rows = append(rows, []Button{{Text: label, URL: joinURL}})
+	}
 	if a.cfg.MiniAppURL != "" {
 		rows = append([][]Button{{{Text: "Open Mini App", WebApp: &WebAppInfo{URL: a.cfg.MiniAppURL}}}}, rows...)
 	}
@@ -434,15 +460,25 @@ func (a *App) home(ctx context.Context, chat, userID int64) {
 }
 
 func (a *App) channelURL() string {
+	if a.cfg.ChannelJoinURL != "" {
+		return a.cfg.ChannelJoinURL
+	}
 	name := strings.TrimPrefix(strings.TrimSpace(a.cfg.Channel), "@")
-	if name == "" || strings.HasPrefix(name, "-") {
+	if name == "" || strings.HasPrefix(name, "-") || strings.IndexFunc(name, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_')
+	}) >= 0 {
 		return ""
 	}
 	return "https://t.me/" + name
 }
 
+func validChannelJoinURL(raw string) bool {
+	u, err := url.Parse(raw)
+	return err == nil && u.Scheme == "https" && u.Host == "t.me" && u.User == nil && u.RawQuery == "" && u.Fragment == "" && u.Path != "" && u.Path != "/" && !strings.ContainsAny(strings.TrimPrefix(u.Path, "/"), " \t\r\n")
+}
+
 func (a *App) requireChannel(ctx context.Context, chat, userID int64) bool {
-	if admin(a, userID) || a.cfg.Channel == "" {
+	if !a.cfg.RequireChannel || admin(a, userID) || a.cfg.Channel == "" {
 		return true
 	}
 	joined, err := a.channelMember(ctx, userID)
@@ -465,7 +501,9 @@ func (a *App) requireChannel(ctx context.Context, chat, userID int64) bool {
 }
 
 func (a *App) channelMember(ctx context.Context, userID int64) (bool, error) {
-	if admin(a, userID) || a.cfg.Channel == "" {
+	// All shopping entry points share this policy, including Mini App and reseller API.
+	// Optional joining must never trigger a network check or delay a customer.
+	if !a.cfg.RequireChannel || admin(a, userID) || a.cfg.Channel == "" {
 		return true, nil
 	}
 	var member struct {
@@ -1135,7 +1173,11 @@ func (a *App) handleCallback(ctx context.Context, c *Callback) {
 	}
 	if c.Data == "gate:check" {
 		if a.requireChannel(ctx, chat, c.From.ID) {
-			a.tg.send(ctx, chat, "✅ Membership verified. Welcome!", nil)
+			text := "✅ Welcome! Joining the updates channel is optional."
+			if a.cfg.RequireChannel && a.cfg.Channel != "" && !admin(a, c.From.ID) {
+				text = "✅ Membership verified. Welcome!"
+			}
+			a.tg.send(ctx, chat, text, nil)
 			a.home(ctx, chat, c.From.ID)
 		}
 		return
