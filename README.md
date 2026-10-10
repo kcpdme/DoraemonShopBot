@@ -15,6 +15,7 @@ The project has no database or framework dependency. A single process runs the T
 - Thirty-minute reservations, duplicate-checkout protection, automatic expiry, and stock release.
 - Exact USDT verification: chain ID, token contract, destination, amount, receipt success, transaction age, and three confirmations.
 - Durable delivery queue with retry behavior and owner emergency controls.
+- Customer reseller API keys with wallet-funded purchases, durable retry protection, and private order retrieval.
 - Owner-only product wizard, stock management, order review, broadcasts, dashboard, and support replies.
 - Optional channel-membership gate and public restock/sale announcements.
 - No third-party Go modules, explorer API key, frontend build step, or external database.
@@ -95,6 +96,16 @@ The Mini App is embedded in the Go binary, so it requires no Node.js installatio
 
 Mini App requests are authenticated server-side with Telegram's HMAC signature. Signatures older than one hour are rejected. The API accepts the Telegram identity from signed launch data only; a browser-provided user ID is never trusted. Product delivery payloads are never returned by the Mini App API.
 
+## Reseller API
+
+Customers can use **Reseller API** in the bot menu or `/apikey` to create, rotate,
+and revoke their own API key. The API uses the existing Mini App HTTPS listener
+and provides prices, wallet balance, order placement, and private API order
+details. Purchases spend the customer's existing USDT wallet balance.
+
+See [Reseller API setup and examples](docs/RESELLER_API.md) for authentication,
+endpoints, delivery responses, and required idempotency keys for safe retries.
+
 ## Buyer flow
 
 1. Browse a product in the Mini App or bot chat.
@@ -154,7 +165,8 @@ The Mini App frontend lives in `cmd/bot/miniapp/` and is embedded by `cmd/bot/mi
 - `POST /api/mini-app/orders`
 - `GET /healthz` (unauthenticated service health check)
 
-All API routes require a fresh `Authorization: tma <Telegram initData>` header.
+All Mini App API routes require a fresh `Authorization: tma <Telegram initData>` header.
+Reseller routes under `/api/v1/reseller/` use `Authorization: Bearer <API_KEY>` instead.
 
 ## Production deployment
 

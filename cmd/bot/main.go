@@ -89,6 +89,7 @@ type StockItem struct {
 	Sold             bool
 }
 type Order struct {
+	Reseller                                       *ResellerOrderData `json:",omitempty"`
 	ProductName, DeliveryInstruction, PaymentIssue string
 	PaymentMessageID                               int64
 	DeliveryPartsSent                              int
@@ -123,6 +124,7 @@ type WalletDeposit struct {
 	CreatedAt, CreditedAt                     time.Time
 }
 type StoreData struct {
+	ResellerKeys   map[string]ResellerKey
 	Products       map[string]Product
 	Stock          map[string]StockItem
 	Orders         map[string]Order
@@ -138,7 +140,7 @@ type Store struct {
 }
 
 func openStore(path string) (*Store, error) {
-	s := &Store{path: path, data: StoreData{Products: map[string]Product{}, Stock: map[string]StockItem{}, Orders: map[string]Order{}, Wallets: map[string]WalletAccount{}, WalletDeposits: map[string]WalletDeposit{}, Started: map[int64]string{}}}
+	s := &Store{path: path, data: StoreData{ResellerKeys: map[string]ResellerKey{}, Products: map[string]Product{}, Stock: map[string]StockItem{}, Orders: map[string]Order{}, Wallets: map[string]WalletAccount{}, WalletDeposits: map[string]WalletDeposit{}, Started: map[int64]string{}}}
 	s.committed, _ = json.Marshal(s.data)
 	b, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -167,6 +169,9 @@ func openStore(path string) (*Store, error) {
 	}
 	if s.data.Started == nil {
 		s.data.Started = map[int64]string{}
+	}
+	if s.data.ResellerKeys == nil {
+		s.data.ResellerKeys = map[string]ResellerKey{}
 	}
 	s.committed, _ = json.Marshal(s.data)
 	return s, nil
@@ -287,6 +292,7 @@ func (t *TG) configureCommands(ctx context.Context) error {
 		{"command": "shop", "description": "Browse available products"},
 		{"command": "wallet", "description": "View or add USDT wallet funds"},
 		{"command": "orders", "description": "View your orders"},
+		{"command": "apikey", "description": "Manage your reseller API key"},
 		{"command": "support", "description": "Contact support"},
 		{"command": "help", "description": "How to use the bot"},
 	}}, nil)
@@ -302,12 +308,14 @@ func (t *TG) configureMiniApp(ctx context.Context, publicURL string) error {
 }
 
 type App struct {
-	verifying sync.Map   // One in-flight RPC check per order, without blocking checkout.
-	opMu      sync.Mutex // Serializes proof, delivery, cancellation and expiration.
-	cfg       Config
-	store     *Store
-	tg        *TG
-	flows     sync.Map // chat ID -> in-chat wizard/support state (deliberately ephemeral)
+	resellerMu     sync.Mutex // Serializes key delivery and rotation.
+	resellerLimits resellerLimiter
+	verifying      sync.Map   // One in-flight RPC check per order, without blocking checkout.
+	opMu           sync.Mutex // Serializes proof, delivery, cancellation and expiration.
+	cfg            Config
+	store          *Store
+	tg             *TG
+	flows          sync.Map // chat ID -> in-chat wizard/support state (deliberately ephemeral)
 }
 
 type flow struct {
@@ -415,6 +423,7 @@ func (a *App) broadcast(ctx context.Context, msg string, includeChannel bool) {
 
 func (a *App) home(ctx context.Context, chat, userID int64) {
 	rows := [][]Button{{{Text: "🛍 Shop", Data: "catalog"}}, {{Text: "💰 My wallet", Data: "wallet"}, {Text: "📦 My orders", Data: "orders"}}, {{Text: "💬 Support", Data: "support"}}}
+	rows = append(rows, []Button{{Text: "🔑 Reseller API", Data: "apikey:menu"}})
 	if a.cfg.MiniAppURL != "" {
 		rows = append([][]Button{{{Text: "Open Mini App", WebApp: &WebAppInfo{URL: a.cfg.MiniAppURL}}}}, rows...)
 	}
@@ -700,9 +709,11 @@ func (a *App) handleMessage(ctx context.Context, m *Message) {
 		t, k := a.productsText()
 		a.tg.send(ctx, m.Chat.ID, t, k)
 	case "/help":
-		a.tg.send(ctx, m.Chat.ID, "/shop — browse products\n/wallet — view or add wallet USDT\n/orders — view orders\n/paid ORDER_ID TX_HASH — submit payment\n/support — contact support\n/cancel — cancel an active step", nil)
+		a.tg.send(ctx, m.Chat.ID, "/shop — browse products\n/wallet — view or add wallet USDT\n/orders — view orders\n/apikey — manage reseller API access\n/paid ORDER_ID TX_HASH — submit payment\n/support — contact support\n/cancel — cancel an active step", nil)
 	case "/wallet":
 		a.walletHome(ctx, m.Chat.ID, m.From.ID)
+	case "/apikey":
+		a.resellerKeyCommand(ctx, m.From.ID, strings.Join(parts[1:], " "))
 	case "/orders":
 		a.sendOrders(ctx, m.Chat.ID, m.From.ID)
 	case "/paid":
@@ -1134,6 +1145,10 @@ func (a *App) handleCallback(ctx context.Context, c *Callback) {
 		return
 	}
 	a.clearFlow(chat)
+	if strings.HasPrefix(c.Data, "apikey:") {
+		a.resellerKeyCommand(ctx, c.From.ID, strings.TrimPrefix(c.Data, "apikey:"))
+		return
+	}
 	if a.handleWalletCallback(ctx, c, chat) {
 		return
 	}

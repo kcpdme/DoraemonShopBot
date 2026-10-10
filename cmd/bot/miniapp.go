@@ -674,6 +674,7 @@ func (a *App) miniAppHandler() (http.Handler, error) {
 		return nil, fmt.Errorf("load Mini App files: %w", err)
 	}
 	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/reseller/", a.resellerAPI)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -692,6 +693,7 @@ func (a *App) miniAppHandler() (http.Handler, error) {
 	if publicURL, parseErr := url.Parse(a.cfg.MiniAppURL); parseErr == nil {
 		prefix := strings.TrimSuffix(publicURL.Path, "/")
 		if prefix != "" {
+			mux.Handle(prefix+"/api/v1/reseller/", http.StripPrefix(prefix, http.HandlerFunc(a.resellerAPI)))
 			mux.HandleFunc(prefix+"/api/mini-app/catalog", a.miniAppCatalog)
 			mux.HandleFunc(prefix+"/api/mini-app/orders", a.miniAppOrders)
 			mux.HandleFunc(prefix+"/api/mini-app/admin/products", a.miniAppAdminProducts)
