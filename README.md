@@ -123,6 +123,11 @@ Public announcements contain neither buyer identity nor private inventory. A tra
 
 Most administration is available from `/start` → **Owner panel**.
 
+In the Mini App admin panel, **Delete** removes a product even if it is sold out
+or has previous sales. Order history is kept. Unfinished orders retain their
+reserved items and original delivery instructions so they can still complete;
+cancelled or expired reservations from deleted products cannot return to sale.
+
 ```text
 /admin                         Open the owner panel
 /confirm ORDER_ID              Deliver after a manual payment check
@@ -151,6 +156,7 @@ Run the test suite and static analysis:
 ```bash
 GOTOOLCHAIN=local go test -race ./...
 GOTOOLCHAIN=local go vet ./...
+node --test cmd/bot/miniapp_ui_test.cjs
 ```
 
 Build a production Linux binary:

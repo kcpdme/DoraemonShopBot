@@ -12,6 +12,21 @@ import (
 func proofAllowed(o Order) bool {
 	return o.Status == "awaiting_payment" || o.Status == "proof_invalid" || o.Status == "payment_submitted"
 }
+
+// A reservation from a removed listing must not return to sale, even when the
+// owner has since created another product using the same SKU.
+func (a *App) releaseStockLocked(stockID, orderID string) {
+	item, exists := a.store.data.Stock[stockID]
+	if !exists || item.Sold || item.OrderID != orderID {
+		return
+	}
+	if item.DiscardOnRelease {
+		delete(a.store.data.Stock, stockID)
+		return
+	}
+	item.OrderID = ""
+	a.store.data.Stock[stockID] = item
+}
 func (a *App) createOrder(buyer *User, code, network string) (Order, error) {
 	return a.createOrderQuantity(buyer, code, network, 1)
 }
@@ -388,11 +403,7 @@ func (a *App) expireUnpaidOrders(ctx context.Context) {
 	for id, o := range a.store.data.Orders {
 		if (o.Status == "awaiting_payment" || o.Status == "proof_invalid") && time.Since(o.CreatedAt) >= 30*time.Minute {
 			for _, sid := range o.StockIDs {
-				x := a.store.data.Stock[sid]
-				if !x.Sold && x.OrderID == o.ID {
-					x.OrderID = ""
-					a.store.data.Stock[sid] = x
-				}
+				a.releaseStockLocked(sid, o.ID)
 			}
 			o.Status = "expired"
 			a.store.data.Orders[id] = o

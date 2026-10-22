@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -156,17 +157,104 @@ func TestMiniAppAdminRequiresOwnerAndManagesPrivateStock(t *testing.T) {
 		t.Fatalf("stock removal status=%d stock=%d", remove.Code, len(store.data.Stock))
 	}
 
-	store.data.Orders["active-order"] = Order{ID: "active-order", SKU: "KEY-1", Status: "payment_submitted"}
-	blocked := httptest.NewRecorder()
-	app.miniAppAdminProductItem(blocked, miniAppOwnerRequest(t, http.MethodDelete, "/api/mini-app/admin/products/KEY-1", "test-token", 7, ""))
-	if blocked.Code != http.StatusConflict || store.data.Products["KEY-1"].SKU != "KEY-1" {
-		t.Fatalf("active product deletion status=%d body=%s", blocked.Code, blocked.Body.String())
-	}
-	delete(store.data.Orders, "active-order")
 	deleteProduct := httptest.NewRecorder()
 	app.miniAppAdminProductItem(deleteProduct, miniAppOwnerRequest(t, http.MethodDelete, "/api/mini-app/admin/products/KEY-1", "test-token", 7, ""))
 	if deleteProduct.Code != http.StatusNoContent || len(store.data.Products) != 0 || len(store.data.Stock) != 0 {
 		t.Fatalf("product deletion status=%d products=%d stock=%d", deleteProduct.Code, len(store.data.Products), len(store.data.Stock))
+	}
+}
+
+func TestMiniAppProductDeletionPreservesOrders(t *testing.T) {
+	for _, status := range []string{"", "awaiting_payment", "proof_invalid", "payment_submitted", "delivery_pending", "delivered", "cancelled", "expired", "payment_rejected"} {
+		t.Run(status, func(t *testing.T) {
+			store, err := openStore(filepath.Join(t.TempDir(), "store.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			store.data.Products["KEY"] = Product{SKU: "KEY", Name: "Original key", DeliveryInstruction: "Original instructions", Active: true}
+			store.data.Products["OTHER"] = Product{SKU: "OTHER", Active: true}
+			store.data.Stock["free"] = StockItem{ID: "free", SKU: "KEY", Payload: "free secret"}
+			store.data.Stock["sold"] = StockItem{ID: "sold", SKU: "KEY", Sold: true, OrderID: "old-order"}
+			store.data.Stock["other"] = StockItem{ID: "other", SKU: "OTHER"}
+			if status != "" {
+				store.data.Orders["order"] = Order{ID: "order", SKU: "KEY", Status: status, Quantity: 1, StockIDs: []string{"reserved"}}
+				store.data.Stock["reserved"] = StockItem{ID: "reserved", SKU: "KEY", OrderID: "order", Payload: "reserved secret", Sold: status == "delivered"}
+			}
+			if err := store.save(); err != nil {
+				t.Fatal(err)
+			}
+			app := &App{cfg: Config{Token: "test-token", OwnerID: 7, MiniAppURL: "https://shop.example/shop/"}, store: store}
+			handler, err := app.miniAppHandler()
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, owner := range []int64{0, 8} {
+				request := miniAppOwnerRequest(t, http.MethodDelete, "/shop/api/mini-app/admin/products/KEY", "test-token", owner, "")
+				if owner == 0 {
+					request.Header.Del("Authorization")
+				}
+				denied := httptest.NewRecorder()
+				handler.ServeHTTP(denied, request)
+				if (owner == 0 && denied.Code != http.StatusUnauthorized) || (owner == 8 && denied.Code != http.StatusForbidden) || len(store.data.Products) != 2 {
+					t.Fatalf("unauthorized deletion: status=%d", denied.Code)
+				}
+			}
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, miniAppOwnerRequest(t, http.MethodDelete, "/shop/api/mini-app/admin/products/KEY", "test-token", 7, ""))
+			if response.Code != http.StatusNoContent {
+				t.Fatalf("delete: status=%d body=%s", response.Code, response.Body.String())
+			}
+			disk, err := openStore(store.path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, exists := disk.data.Products["KEY"]; exists || len(disk.data.Products) != 1 || disk.data.Stock["other"].SKU != "OTHER" {
+				t.Fatal("deletion not persisted or unrelated product changed")
+			}
+			active := status == "awaiting_payment" || status == "proof_invalid" || status == "payment_submitted" || status == "delivery_pending"
+			wantStock := 1
+			if active {
+				wantStock++
+			}
+			if len(disk.data.Stock) != wantStock || (active && (!disk.data.Stock["reserved"].DiscardOnRelease || disk.data.Stock["reserved"].Payload != "reserved secret")) {
+				t.Fatal("wrong inventory retained after deletion")
+			}
+			if status != "" {
+				order := disk.data.Orders["order"]
+				if order.Status != status || order.ProductName != "Original key" || order.DeliveryInstruction != "Original instructions" {
+					t.Fatal("order history or legacy delivery snapshot lost")
+				}
+			}
+			if _, err := app.createOrder(&User{ID: 42}, "KEY", "bep20"); err == nil {
+				t.Fatal("deleted product accepted a new purchase")
+			}
+		})
+	}
+}
+
+func TestMiniAppProductDeletionRollsBackOnSaveFailure(t *testing.T) {
+	store, err := openStore(filepath.Join(t.TempDir(), "store.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.data.Products["KEY"] = Product{SKU: "KEY", Name: "Key", DeliveryInstruction: "Instructions"}
+	store.data.Orders["order"] = Order{ID: "order", SKU: "KEY", Status: "payment_submitted", StockIDs: []string{"stock"}}
+	store.data.Stock["stock"] = StockItem{ID: "stock", SKU: "KEY", OrderID: "order", Payload: "secret"}
+	if err := store.save(); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := json.Marshal(store.data)
+	blocked := filepath.Join(t.TempDir(), "blocked")
+	if err := os.WriteFile(blocked, []byte("file"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	store.path = filepath.Join(blocked, "store.json")
+	app := &App{store: store}
+	response := httptest.NewRecorder()
+	app.deleteMiniAppProduct(response, "KEY")
+	current, _ := json.Marshal(store.data)
+	if response.Code != http.StatusInternalServerError || string(current) != string(before) {
+		t.Fatal("failed deletion changed in-memory products, order snapshots, or inventory")
 	}
 }
 

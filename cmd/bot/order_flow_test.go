@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,6 +19,97 @@ type lifecycleRecorder struct {
 	rpcCalls         int
 	deliveries       []string
 	failInstructions bool
+}
+
+func TestDeletedProductStillDeliversAfterRestart(t *testing.T) {
+	a, o, record := lifecycleFixture(t, nil)
+	// Exercise legacy orders that rely on the product for their snapshot.
+	o.ProductName, o.DeliveryInstruction = "", ""
+	a.store.data.Orders[o.ID] = o
+	response := httptest.NewRecorder()
+	a.deleteMiniAppProduct(response, o.SKU)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("delete status=%d", response.Code)
+	}
+	disk, err := openStore(a.store.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.store = disk
+	// Recreating the SKU must not change the original buyer's delivery.
+	a.store.data.Products[o.SKU] = Product{SKU: o.SKU, Name: "Replacement product", DeliveryInstruction: "Replacement instructions", Active: true}
+	record.failInstructions = true
+	a.verifyOrder(context.Background(), o.ID)
+	if got := storedOrder(a, o.ID); got.Status != "delivery_pending" || got.DeliveryPartsSent != 1 {
+		t.Fatalf("deleted product did not reach delivery: %+v", got)
+	}
+	record.failInstructions = false
+	a.verifyOrder(context.Background(), o.ID)
+	if got := storedOrder(a, o.ID); got.Status != "delivered" || got.ProductName != "Digital product" || got.DeliveryInstruction != "Use the supplied private key" {
+		t.Fatalf("deleted product did not finish delivery with original details: %+v", got)
+	}
+	record.mu.Lock()
+	defer record.mu.Unlock()
+	joined := strings.Join(record.deliveries, "\n")
+	if len(record.deliveries) != 3 || !strings.Contains(joined, "private-key-one") || strings.Contains(joined, "Replacement") {
+		t.Fatal("delivery retry lost or duplicated the original items")
+	}
+}
+
+func TestDeletedProductReservationsAreDiscardedWhenReleased(t *testing.T) {
+	for _, action := range []string{"cancel", "expire", "reject"} {
+		t.Run(action, func(t *testing.T) {
+			a, o, _ := lifecycleFixture(t, nil)
+			if action != "reject" {
+				o.Status = "awaiting_payment"
+				o.CreatedAt = time.Now().Add(-time.Hour)
+				a.store.data.Orders[o.ID] = o
+			}
+			response := httptest.NewRecorder()
+			a.deleteMiniAppProduct(response, o.SKU)
+			if response.Code != http.StatusNoContent {
+				t.Fatalf("delete status=%d", response.Code)
+			}
+			// A later product with the same SKU must never inherit old stock.
+			a.store.data.Products[o.SKU] = Product{SKU: o.SKU, Name: "Replacement", Active: true, PriceUSDT: 1}
+			switch action {
+			case "cancel":
+				a.cancelOrder(context.Background(), o.BuyerID, o.BuyerID, o.ID)
+			case "expire":
+				a.expireUnpaidOrders(context.Background())
+			case "reject":
+				a.reject(context.Background(), &Message{Chat: Chat{ID: 7}}, []string{"/reject", o.ID, "test rejection"})
+			}
+			if len(a.store.data.Stock) != 0 {
+				t.Fatal("deleted product stock returned to sale")
+			}
+			if _, err := a.createOrder(&User{ID: 456}, o.SKU, "bep20"); err == nil {
+				t.Fatal("replacement product sold discarded stock")
+			}
+		})
+	}
+}
+
+func TestProductDeletionDuringPaymentVerification(t *testing.T) {
+	a, o, _ := lifecycleFixture(t, nil)
+	base := a.tg.client.Transport
+	entered, release, finished := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	a.tg.client.Transport = paymentTransport(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Host != "api.telegram.org" {
+			once.Do(func() { close(entered); <-release })
+		}
+		return base.RoundTrip(r)
+	})
+	go func() { defer close(finished); a.verifyOrder(context.Background(), o.ID) }()
+	<-entered
+	response := httptest.NewRecorder()
+	a.deleteMiniAppProduct(response, o.SKU)
+	close(release)
+	<-finished
+	if response.Code != http.StatusNoContent || storedOrder(a, o.ID).Status != "delivered" {
+		t.Fatalf("deletion interrupted in-flight verification: delete=%d order=%s", response.Code, storedOrder(a, o.ID).Status)
+	}
 }
 
 func lifecycleFixture(t *testing.T, mutate func(map[string]any)) (*App, Order, *lifecycleRecorder) {

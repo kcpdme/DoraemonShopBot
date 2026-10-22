@@ -8,6 +8,8 @@
   let stockLoadVersion = 0;
   let stockLoading = false;
   let stockClearing = false;
+  let confirmationOpen = false;
+  const deletingProducts = new Set();
 
   if (tg) {
     tg.ready();
@@ -17,6 +19,19 @@
   }
 
   function haptic(kind = "light") { tg?.HapticFeedback?.impactOccurred(kind); }
+  async function confirmAction(message) {
+    if (confirmationOpen) return false;
+    confirmationOpen = true;
+    try {
+      // Browser dialogs can be suppressed by Telegram's embedded WebView.
+      if (tg?.isVersionAtLeast?.("6.2") && tg?.showConfirm) {
+        return await new Promise((resolve) => tg.showConfirm(message, resolve));
+      }
+      return window.confirm(message);
+    } finally {
+      confirmationOpen = false;
+    }
+  }
   function showNotice(message) {
     el("notice").textContent = message;
     el("notice").classList.toggle("hidden", !message);
@@ -553,18 +568,24 @@
   }
 
   async function deleteProduct(product) {
-    const confirmed = window.confirm(`Delete ${product.name}? This permanently removes the product and all of its stock items.`);
-    if (!confirmed) return;
-    showNotice("");
+    if (deletingProducts.has(product.sku)) return;
+    deletingProducts.add(product.sku);
     try {
+      const confirmed = await confirmAction(`Delete ${product.name}? Removes the listing and stock. Existing orders and reserved items are kept until settled.`);
+      if (!confirmed) return;
+      showNotice("");
       await api(`api/mini-app/admin/products/${encodeURIComponent(product.sku)}`, { method: "DELETE" });
+      state.products = state.products.filter((item) => item.sku !== product.sku);
+      renderCatalog();
       state.adminSection = "products";
       haptic("medium");
       await loadAdmin();
-      showNotice("Product and its stock were deleted.");
+      showNotice("Product deleted. Existing orders are preserved.");
     } catch (error) {
       showNotice(error.message);
       tg?.HapticFeedback?.notificationOccurred("error");
+    } finally {
+      deletingProducts.delete(product.sku);
     }
   }
 
@@ -590,9 +611,9 @@
   }
 
   async function removeStock(id) {
-    if (!window.confirm("Remove this available stock item? This cannot be undone.")) return;
     showNotice("");
     try {
+      if (!await confirmAction("Remove this available stock item? This cannot be undone.")) return;
       await api(`api/mini-app/admin/stock/${encodeURIComponent(id)}`, { method: "DELETE" });
       state.adminSection = "stock";
       haptic("medium");
@@ -648,11 +669,11 @@
     const product = state.adminProducts.find((item) => item.sku === sku);
     const available = state.stock.filter((item) => item.sku === sku && item.state === "available").length;
     if (!product || !available) return;
-    if (!window.confirm(`Clear all ${available} available stock items for ${product.name}? This cannot be undone. Reserved and sold items will be kept.`)) return;
     stockClearing = true;
     renderAdminStock();
     showNotice("");
     try {
+      if (!await confirmAction(`Clear ${available} available stock items for ${product.name}? This cannot be undone. Reserved and sold items are kept.`)) return;
       const data = await api(`api/mini-app/admin/stock?sku=${encodeURIComponent(sku)}`, { method: "DELETE" });
       await loadAdmin();
       showNotice(`${data.removed} stock items cleared from ${product.name}.`);

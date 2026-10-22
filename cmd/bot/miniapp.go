@@ -347,30 +347,44 @@ func (a *App) miniAppAdminProductItem(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) deleteMiniAppProduct(w http.ResponseWriter, productSKU string) {
-	// A product's delivery payload may still be needed for an unfinished order.
-	// Refuse the destructive request until all buyers using it are settled.
+	// Remove the listing immediately, preserving the snapshots and inventory
+	// needed to finish existing orders, including older orders without snapshots.
 	a.opMu.Lock()
 	defer a.opMu.Unlock()
 	a.store.mu.Lock()
 	defer a.store.mu.Unlock()
-	if _, exists := a.store.data.Products[productSKU]; !exists {
+	product, exists := a.store.data.Products[productSKU]
+	if !exists {
 		writeAPIError(w, http.StatusNotFound, errors.New("product not found"))
 		return
 	}
-	for _, order := range a.store.data.Orders {
+	reserved := make(map[string]bool)
+	for orderID, order := range a.store.data.Orders {
 		if order.SKU != productSKU {
 			continue
 		}
-		switch order.Status {
-		case "awaiting_payment", "proof_invalid", "payment_submitted", "delivery_pending":
-			writeAPIError(w, http.StatusConflict, errors.New("this product has an active order and cannot be deleted yet"))
-			return
+		if order.ProductName == "" {
+			order.ProductName = product.Name
+		}
+		if order.DeliveryInstruction == "" {
+			order.DeliveryInstruction = product.DeliveryInstruction
+		}
+		a.store.data.Orders[orderID] = order
+		if proofAllowed(order) || order.Status == "delivery_pending" {
+			for _, stockID := range order.StockIDs {
+				reserved[stockID] = true
+			}
 		}
 	}
 	delete(a.store.data.Products, productSKU)
 	for stockID, item := range a.store.data.Stock {
 		if item.SKU == productSKU {
-			delete(a.store.data.Stock, stockID)
+			if reserved[stockID] {
+				item.DiscardOnRelease = true
+				a.store.data.Stock[stockID] = item
+			} else {
+				delete(a.store.data.Stock, stockID)
+			}
 		}
 	}
 	if err := a.store.saveLocked(); err != nil {

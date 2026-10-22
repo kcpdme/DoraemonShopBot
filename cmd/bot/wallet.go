@@ -361,11 +361,7 @@ func (a *App) purchaseWithWallet(ctx context.Context, buyer *User, sku string, q
 	account := a.store.data.Wallets[walletKey(buyer.ID)]
 	if account.BalanceCents < cost {
 		for _, stockID := range latest.StockIDs {
-			stock := a.store.data.Stock[stockID]
-			if stock.OrderID == latest.ID && !stock.Sold {
-				stock.OrderID = ""
-				a.store.data.Stock[stockID] = stock
-			}
+			a.releaseStockLocked(stockID, latest.ID)
 		}
 		latest.Status = "cancelled"
 		a.store.data.Orders[latest.ID] = latest

@@ -101,6 +101,7 @@ type StockItem struct {
 	OrderID          string
 	AddedAt          time.Time
 	Sold             bool
+	DiscardOnRelease bool `json:",omitempty"`
 }
 type Order struct {
 	Reseller                                       *ResellerOrderData `json:",omitempty"`
@@ -861,9 +862,7 @@ func (a *App) cancelOrder(ctx context.Context, chat, buyer int64, orderID string
 		return
 	}
 	for _, sid := range o.StockIDs {
-		x := a.store.data.Stock[sid]
-		x.OrderID = ""
-		a.store.data.Stock[sid] = x
+		a.releaseStockLocked(sid, o.ID)
 	}
 	o.Status = "cancelled"
 	a.store.data.Orders[o.ID] = o
@@ -1148,9 +1147,7 @@ func (a *App) reject(ctx context.Context, m *Message, p []string) {
 		return
 	}
 	for _, sid := range o.StockIDs {
-		x := a.store.data.Stock[sid]
-		x.OrderID = ""
-		a.store.data.Stock[sid] = x
+		a.releaseStockLocked(sid, o.ID)
 	}
 	o.Status = "payment_rejected"
 	a.store.data.Orders[o.ID] = o

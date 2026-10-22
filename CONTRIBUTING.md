@@ -19,6 +19,7 @@ Thank you for helping improve ZenitsuThunder Shop Bot.
    ```bash
    go test -race ./...
    go vet ./...
+   node --test cmd/bot/miniapp_ui_test.cjs
    ```
 
 5. Open a pull request describing the problem, the solution, and how it was verified.
